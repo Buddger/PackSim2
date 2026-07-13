@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from "react";
 import * as THREE from "three";
 
 /* ============================================================
-   Parcel Labelling Strategy Simulator — Order 4711
+   Parcel Labelling Strategy Simulator — Order Order C
    Three scenarios, one packing area, timeline-driven MVP
    ============================================================ */
 
@@ -25,11 +25,31 @@ const C = {
 // ---------- Timeline data ----------
 // Waypoint path: [t, x, y, z]; parcel invisible before spawn.
 const CONV_Y = 0.78;
-const TABLE = { x: -9, y: 1.18, z: 3 };
-const MACHINE_X = 5;
+const TABLE_Y = 1.18;
+const MACHINE_X = 12;
+const CONV_END = 27;
+const CONV_START = -15.5;
+
+// three packing stations feeding the same outbound conveyor
+// 7 packing stations grouped by capacity: 4x single-parcel, 2x two-parcel, 1x three-parcel
+const STATIONS = [
+  { x: -13.6, z: 3.2, cap: 1 },
+  { x: -11.4, z: 3.2, cap: 1 },
+  { x: -9.2, z: 3.2, cap: 1 },
+  { x: -7.0, z: 3.2, cap: 1 },
+  { x: -4.4, z: 3.2, cap: 2 },
+  { x: -2.2, z: 3.2, cap: 2 },
+  { x: 1.2, z: 3.2, cap: 3 },
+];
+// orders routed by the Ortec packing proposal to a matching-capacity station
+const ORDERS = [
+  { key: "A", count: 1, color: "#4da3ff", station: 1 },
+  { key: "B", count: 2, color: "#ffd166", station: 4 },
+  { key: "C", count: 3, color: "#ff7ed4", station: 6 },
+];
+const entryX = (st) => STATIONS[st].x + 1.5; // where the chute meets the conveyor
 
 function ride(t0, xFrom, xTo, speed = 2.5) {
-  // helper: time to travel conveyor
   return t0 + Math.abs(xTo - xFrom) / speed;
 }
 
@@ -40,213 +60,319 @@ function buildScenario(n) {
   let duration = 25;
   let keyMessage = "";
 
-  const packPath = (spawn, packEnd) => [[spawn, TABLE.x, TABLE.y, TABLE.z], [packEnd, TABLE.x, TABLE.y, TABLE.z]];
-  const toConv = (tStart, tEnd) => [
-    [tStart, TABLE.x, TABLE.y, TABLE.z],
-    [tStart + (tEnd - tStart) * 0.5, -7.2, CONV_Y + 0.25, 1.4],
-    [tEnd, -6, CONV_Y, 0],
-  ];
+  const packPath = (st, spawn, end) => {
+    const S = STATIONS[st];
+    return [[spawn, S.x, TABLE_Y, S.z], [end, S.x, TABLE_Y, S.z]];
+  };
+  const toConv = (st, tStart, tEnd) => {
+    const S = STATIONS[st];
+    return [
+      [tStart, S.x, TABLE_Y, S.z],
+      [tStart + (tEnd - tStart) * 0.5, S.x + 0.9, CONV_Y + 0.25, 1.5],
+      [tEnd, entryX(st), CONV_Y, 0],
+    ];
+  };
+  const base = (oi, idx, extra) => {
+    const O = ORDERS[oi];
+    return {
+      st: O.station,
+      order: O.key,
+      orderSize: O.count,
+      color: O.color,
+      id: `P-${O.key}-0${idx}`,
+      name: `${O.key}-${idx}`,
+      ...extra,
+    };
+  };
+  // parcel sizes per station
+  const SZ = {
+    A1: [0.9, 0.7, 0.8],
+    B1: [0.7, 0.55, 0.7], B2: [1.0, 0.6, 0.8],
+    C1: [0.75, 0.6, 0.75], C2: [0.95, 0.5, 0.8], C3: [1.25, 0.95, 0.9], C3s: [1.1, 0.85, 0.85], C4: [0.85, 0.65, 0.8],
+  };
+
+  const pushSimple = (d, labels) => {
+    const tEnter = d.move + 1.5;
+    const tExit = ride(tEnter, entryX(d.st), CONV_END);
+    parcels.push({
+      ...d,
+      path: [...packPath(d.st, d.spawn, d.move), ...toConv(d.st, d.move, tEnter).slice(1), [tExit, CONV_END, CONV_Y, 0]],
+      labels,
+      finalT: null, conveyor: [tEnter, tExit], loop: [], stagingIv: null,
+    });
+    return { tEnter, tExit };
+  };
 
   if (n === 1) {
-    duration = 23.5;
-    keyMessage = "Fast parcel flow, but the final parcel count is unknown during early label generation.";
-    const defs = [
-      { id: "P-4711-01", name: "Parcel 1", size: [0.75, 0.6, 0.75], spawn: 0, packEnd: 3, labelT: 3.2, seq: "1/X", move: 3.6 },
-      { id: "P-4711-02", name: "Parcel 2", size: [0.95, 0.5, 0.8], spawn: 4, packEnd: 7, labelT: 7.3, seq: "2/X", move: 7.8 },
-      { id: "P-4711-03", name: "Parcel 3", size: [1.25, 0.95, 0.9], spawn: 8.5, packEnd: 11.5, labelT: 11.8, seq: "3/X", move: 12.3 },
-    ];
-    defs.forEach((d, i) => {
-      const tEnter = d.move + 1.5;
-      const tExit = ride(tEnter, -6, 15);
-      parcels.push({
-        ...d,
-        path: [...packPath(d.spawn, d.move), ...toConv(d.move, tEnter).slice(1), [tExit, 15, CONV_Y, 0]],
-        labels: [[d.labelT, d.seq, C.orange, "count unknown"]],
-        finalT: null, conveyor: [tEnter, tExit], loop: [], stagingIv: null,
-      });
-      messages.push([d.spawn, `Packing ${d.name}…`]);
-      messages.push([d.labelT, `Label ${d.seq} printed — total parcel count still unknown`, "warn"]);
-      messages.push([d.move, `${d.name} released to outbound conveyor immediately`, "ok"]);
-    });
-    messages.push([12.3, "Order 4711: all 3 parcels packed — count known only now", "ok"]);
-    messages.push([13, "Completed parcels: 3 of 3", "ok"]);
+    duration = 25;
+    keyMessage = "Fast parcel flow from all stations, but the final parcel count is unknown during early label generation.";
+    // Station A — order Order A, 1 parcel
+    const a1 = base(0, 1, { size: SZ.A1, spawn: 1, packEnd: 3.5, labelT: 3.7, seq: "1/X", move: 4.1 });
+    pushSimple(a1, [[a1.labelT, "1/X", C.orange, "count unknown"]]);
+    // Station B — order Order B, 2 parcels
+    const b1 = base(1, 1, { size: SZ.B1, spawn: 0, packEnd: 2.5, labelT: 2.7, seq: "1/X", move: 3.1 });
+    const b2 = base(1, 2, { size: SZ.B2, spawn: 5, packEnd: 7.5, labelT: 7.7, seq: "2/X", move: 8.1 });
+    pushSimple(b1, [[b1.labelT, "1/X", C.orange, "count unknown"]]);
+    pushSimple(b2, [[b2.labelT, "2/X", C.orange, "count unknown"]]);
+    // Station C — order Order C, 3 parcels
+    const c1 = base(2, 1, { size: SZ.C1, spawn: 0, packEnd: 3, labelT: 3.2, seq: "1/X", move: 3.6 });
+    const c2 = base(2, 2, { size: SZ.C2, spawn: 4, packEnd: 7, labelT: 7.3, seq: "2/X", move: 7.8 });
+    const c3 = base(2, 3, { size: SZ.C3, spawn: 8.5, packEnd: 11.5, labelT: 11.8, seq: "3/X", move: 12.3 });
+    pushSimple(c1, [[c1.labelT, "1/X", C.orange, "count unknown"]]);
+    pushSimple(c2, [[c2.labelT, "2/X", C.orange, "count unknown"]]);
+    pushSimple(c3, [[c3.labelT, "3/X", C.orange, "count unknown"]]);
+
+    messages.push([0, "3 stations packing in parallel: Order A (1 pc) · Order B (2 pcs) · Order C (3 pcs)"]);
+    messages.push([2.7, "Order B: label 1/X printed — parcel count unknown at print time", "warn"]);
+    messages.push([3.7, "Order A: label 1/X — even the single-parcel order prints an open count", "warn"]);
+    messages.push([7.7, "Order B fully packed — but labels already left as 1/X · 2/X", "warn"]);
+    messages.push([11.8, "Order C: all parcels packed — count known only now", "ok"]);
+    messages.push([13, "All orders packed: 6 parcels released immediately, counts confirmed late", "ok"]);
   }
 
   if (n === 2) {
-    duration = 28.5;
-    keyMessage = "Correct final parcel numbering, but parcels wait in the packing area until the complete order is ready.";
-    const slots = [
-      { x: -6.2, z: 4.6 },
-      { x: -4.5, z: 4.6 },
-      { x: -2.8, z: 4.6 },
+    duration = 31;
+    keyMessage = "Correct final numbering for every order, but multi-parcel orders wait in the packing area — the more parcels, the longer the wait.";
+    const SLOTS = [
+      [{ x: -12.8, z: 5.2 }],
+      [{ x: -5.8, z: 5.2 }, { x: -3.2, z: 5.2 }],
+      [{ x: -0.4, z: 5.2 }, { x: 2.6, z: 5.2 }, { x: 3.8, z: 5.2 }],
     ];
-    const defs = [
-      { id: "P-4711-01", name: "Parcel 1", size: [0.75, 0.6, 0.75], spawn: 0, packEnd: 3, stageIn: 4.4, finalT: 13, seq: "1/3", release: 16 },
-      { id: "P-4711-02", name: "Parcel 2", size: [0.95, 0.5, 0.8], spawn: 4, packEnd: 7, stageIn: 8.4, finalT: 14, seq: "2/3", release: 16.8 },
-      { id: "P-4711-03", name: "Parcel 3", size: [1.25, 0.95, 0.9], spawn: 8, packEnd: 11, stageIn: 12.4, finalT: 15, seq: "3/3", release: 17.6 },
-    ];
-    defs.forEach((d, i) => {
-      const s = slots[i];
-      const tEnter = d.release + 1.6;
-      const tExit = ride(tEnter, -6, 15);
+    const pushStaged = (d, slot, finalLabel) => {
+      const s = slot;
+      const tEnter = d.release + 1.5;
+      const tExit = ride(tEnter, entryX(d.st), CONV_END);
       parcels.push({
         ...d,
         path: [
-          ...packPath(d.spawn, d.packEnd + 0.2),
+          ...packPath(d.st, d.spawn, d.packEnd + 0.2),
           [d.stageIn, s.x, 0.55 + d.size[1] / 2, s.z],
           [d.release, s.x, 0.55 + d.size[1] / 2, s.z],
-          [d.release + 0.8, (s.x - 6) / 2, CONV_Y + 0.3, 2.2],
-          [tEnter, -6, CONV_Y, 0],
-          [tExit, 15, CONV_Y, 0],
+          [d.release + 0.7, (s.x + entryX(d.st)) / 2, CONV_Y + 0.3, 2.4],
+          [tEnter, entryX(d.st), CONV_Y, 0],
+          [tExit, CONV_END, CONV_Y, 0],
         ],
-        labels: [[d.finalT, d.seq, C.green, "final label"]],
+        labels: [[d.finalT, finalLabel, C.green, "final label"]],
         conveyor: [tEnter, tExit], loop: [], stagingIv: [d.stageIn, d.release],
       });
-      messages.push([d.spawn, `Packing ${d.name}…`]);
-      messages.push([d.stageIn, `${d.name} moved to Order Consolidation Area — no shipping label yet`, "warn"]);
-    });
-    messages.push([12.5, "Order complete: 3 of 3 parcels packed", "ok"]);
-    messages.push([13, "Printing final labels 1/3 · 2/3 · 3/3", "ok"]);
-    messages.push([16, "All parcels labelled — released together to outbound conveyor", "ok"]);
+    };
+    // A — complete after one parcel: near-zero penalty
+    const a1 = base(0, 1, { size: SZ.A1, spawn: 0.5, packEnd: 3, stageIn: 4.2, finalT: 5.2, release: 6 });
+    pushStaged(a1, SLOTS[0][0], "1/1");
+    // B — first parcel waits for the second
+    const b1 = base(1, 1, { size: SZ.B1, spawn: 0, packEnd: 3, stageIn: 4.4, finalT: 9.8, release: 11.5 });
+    const b2 = base(1, 2, { size: SZ.B2, spawn: 4.5, packEnd: 7.5, stageIn: 8.9, finalT: 10.4, release: 12.2 });
+    pushStaged(b1, SLOTS[1][0], "1/2");
+    pushStaged(b2, SLOTS[1][1], "2/2");
+    // C — as before
+    const c1 = base(2, 1, { size: SZ.C1, spawn: 0, packEnd: 3, stageIn: 4.4, finalT: 13, release: 16 });
+    const c2 = base(2, 2, { size: SZ.C2, spawn: 4, packEnd: 7, stageIn: 8.4, finalT: 13.7, release: 16.8 });
+    const c3 = base(2, 3, { size: SZ.C3, spawn: 8, packEnd: 11, stageIn: 12.4, finalT: 14.4, release: 17.6 });
+    pushStaged(c1, SLOTS[2][0], "1/3");
+    pushStaged(c2, SLOTS[2][1], "2/3");
+    pushStaged(c3, SLOTS[2][2], "3/3");
+
+    messages.push([0, "3 stations packing — parcels consolidate per order before labelling"]);
+    messages.push([4.2, "Order A staged — order already complete with 1 parcel", "info"]);
+    messages.push([5.2, "Order A: label 1/1 printed — near-zero waiting for single-parcel orders", "ok"]);
+    messages.push([4.4, "B-1 and C-1 wait unlabelled in the consolidation area", "warn"]);
+    messages.push([9.1, "Order B complete: 2 of 2 packed", "ok"]);
+    messages.push([9.8, "Order B: printing final labels 1/2 · 2/2, releasing together", "ok"]);
+    messages.push([12.5, "Order C complete: 3 of 3 packed", "ok"]);
+    messages.push([13, "Order C: printing final labels 1/3 · 2/3 · 3/3", "ok"]);
+    messages.push([16, "Order C released together — first parcel waited ~12s in staging", "warn"]);
   }
 
   if (n === 3) {
-    duration = 30;
-    keyMessage = "Immediate parcel release with correct final numbering downstream, but incomplete orders require conveyor recirculation.";
-    // loop geometry waypoints (x,z): machine(5,0) -> (6.5,0) -> (6.5,-4.2) -> (-1.5,-4.2) -> (-1.5,0) -> ride back to machine
-    const loopFrom = (t0) => {
-      const pts = [
-        [t0, 5, CONV_Y, 0],
-        [t0 + 0.6, 6.5, CONV_Y, 0],
-        [t0 + 2.3, 6.5, CONV_Y, -4.2],
-        [t0 + 5.5, -1.5, CONV_Y, -4.2],
-        [t0 + 7.2, -1.5, CONV_Y, 0],
-        [t0 + 9.8, 5, CONV_Y, 0],
-      ];
-      return pts;
-    };
-    const mk = (d) => {
-      const tEnter = d.move + 1.5;
-      const tArr = ride(tEnter, -6, MACHINE_X); // arrive machine
-      return { ...d, tEnter, tArr };
-    };
-    const d1 = mk({ id: "P-4711-01", name: "Parcel 1", size: [0.75, 0.6, 0.75], spawn: 0, packEnd: 3, interimT: 3.2, move: 3.6 });
-    const d2 = mk({ id: "P-4711-02", name: "Parcel 2", size: [0.95, 0.5, 0.8], spawn: 4, packEnd: 7, interimT: 7.2, move: 7.6 });
-    const d3 = mk({ id: "P-4711-03", name: "Parcel 3", size: [1.25, 0.95, 0.9], spawn: 8, packEnd: 11, interimT: 11.2, move: 11.6 });
-
-    // P3: arrives machine, order already complete (registered at interim of P3)
-    // P1 & P2: one loop pass each
+    duration = 32;
+    keyMessage = "Immediate release from all stations with correct numbering downstream — but every incomplete order sends parcels through the recirculation loop.";
+    const loopFrom = (t0) => [
+      [t0, MACHINE_X, CONV_Y, 0],
+      [t0 + 0.6, MACHINE_X + 1.5, CONV_Y, 0],
+      [t0 + 2.3, MACHINE_X + 1.5, CONV_Y, -4.2],
+      [t0 + 5.5, MACHINE_X - 6.5, CONV_Y, -4.2],
+      [t0 + 7.2, MACHINE_X - 6.5, CONV_Y, 0],
+      [t0 + 9.8, MACHINE_X, CONV_Y, 0],
+    ];
+    const mk = (d) => ({ ...d, tEnter: d.move + 1.5, tArr: ride(d.move + 1.5, entryX(d.st), MACHINE_X) });
     const build = (d, seq, loops) => {
-      let path = [...packPath(d.spawn, d.move), ...toConv(d.move, d.tEnter).slice(1), [d.tArr, MACHINE_X, CONV_Y, 0]];
-      let t = d.tArr + 1.0; // scan dwell
+      let path = [...packPath(d.st, d.spawn, d.move), ...toConv(d.st, d.move, d.tEnter).slice(1), [d.tArr, MACHINE_X, CONV_Y, 0]];
+      let t = d.tArr + 1.0;
       path.push([t, MACHINE_X, CONV_Y, 0]);
       const loopIv = [];
       for (let i = 0; i < loops; i++) {
-        const lp = loopFrom(t);
-        path = path.concat(lp.slice(1));
+        path = path.concat(loopFrom(t).slice(1));
         loopIv.push([t, t + 9.8]);
         t += 9.8;
-        path.push([t + 1.0, MACHINE_X, CONV_Y, 0]); // second scan dwell
+        path.push([t + 1.0, MACHINE_X, CONV_Y, 0]);
         t += 1.0;
       }
       const finalT = t;
-      const tExit = ride(t + 0.2, MACHINE_X, 15);
-      path.push([tExit, 15, CONV_Y, 0]);
-      const labels = [[d.interimT, "INTERIM", C.blue, d.id], [finalT, seq, C.green, "final label"]];
-      return { ...d, path, labels, seq, finalT, conveyor: [d.tEnter, tExit], loop: loopIv, stagingIv: null };
+      const tExit = ride(t + 0.2, MACHINE_X, CONV_END);
+      path.push([tExit, CONV_END, CONV_Y, 0]);
+      return {
+        ...d, path, seq, finalT,
+        labels: [[d.interimT, "INTERIM", C.blue, d.id], [finalT, seq, C.green, "final label"]],
+        conveyor: [d.tEnter, tExit], loop: loopIv, stagingIv: null,
+      };
     };
-    const p1 = build(d1, "1/3", 1);
-    const p2 = build(d2, "2/3", 1);
-    const p3 = build(d3, "3/3", 0);
-    parcels.push(p1, p2, p3);
+    // A — single parcel: order complete at its own interim, no loop ever
+    const a1 = mk(base(0, 1, { size: SZ.A1, spawn: 2, packEnd: 4.5, interimT: 4.7, move: 5.1 }));
+    // B — first parcel loops once (second parcel packed late)
+    const b1 = mk(base(1, 1, { size: SZ.B1, spawn: 0, packEnd: 2.5, interimT: 2.7, move: 3.1 }));
+    const b2 = mk(base(1, 2, { size: SZ.B2, spawn: 8, packEnd: 10.5, interimT: 10.7, move: 11 }));
+    // C — parcels 1 & 2 loop once, parcel 3 completes the order
+    const c1 = mk(base(2, 1, { size: SZ.C1, spawn: 0, packEnd: 3, interimT: 3.2, move: 3.6 }));
+    const c2 = mk(base(2, 2, { size: SZ.C2, spawn: 4, packEnd: 7, interimT: 7.2, move: 7.6 }));
+    const c3 = mk(base(2, 3, { size: SZ.C3, spawn: 8, packEnd: 11, interimT: 11.2, move: 11.6 }));
 
-    scans.push(d1.tArr, d2.tArr, d3.tArr, p1.finalT - 1.0, p2.finalT - 1.0);
+    const pA = build(a1, "1/1", 0);
+    const pB1 = build(b1, "1/2", 1);
+    const pB2 = build(b2, "2/2", 0);
+    const pC1 = build(c1, "1/3", 1);
+    const pC2 = build(c2, "2/3", 1);
+    const pC3 = build(c3, "3/3", 0);
+    parcels.push(pA, pB1, pB2, pC1, pC2, pC3);
 
-    messages.push([0, "Packing Parcel 1…"]);
-    messages.push([d1.interimT, "Interim label applied to Parcel 1 — final label pending", "info"]);
-    messages.push([d1.tArr, "Scan: order status 1 of 3 registered → Parcel 1 redirected to loop", "warn"]);
-    messages.push([d2.interimT, "Interim label applied to Parcel 2", "info"]);
-    messages.push([d2.tArr, "Scan: order status 2 of 3 registered → Parcel 2 redirected to loop", "warn"]);
-    messages.push([d3.interimT, "Order 4711 complete: 3 of 3 parcels registered", "ok"]);
-    messages.push([d3.tArr, "Scan: order complete → final label 3/3 applied", "ok"]);
-    messages.push([p1.finalT, "Parcel 1 returns from loop → final label 1/3 applied", "ok"]);
-    messages.push([p2.finalT, "Parcel 2 returns from loop → final label 2/3 applied", "ok"]);
+    scans.push(c1.tArr, b1.tArr, c2.tArr, a1.tArr, c3.tArr, b2.tArr, pC1.finalT - 1, pB1.finalT - 1, pC2.finalT - 1);
+
+    messages.push([0, "3 stations packing — every parcel gets an interim label and leaves immediately"]);
+    messages.push([c1.interimT, "C-1: interim label — final pending", "info"]);
+    messages.push([c1.tArr, "Scan C-1: order 1 of 3 registered → loop", "warn"]);
+    messages.push([b1.tArr, "Scan B-1: order 1 of 2 registered → loop", "warn"]);
+    messages.push([c2.tArr, "Scan C-2: order 2 of 3 registered → loop", "warn"]);
+    messages.push([a1.tArr, "Scan A-1: single-parcel order complete → final 1/1, no loop", "ok"]);
+    messages.push([c3.interimT, "Order Order C complete: 3 of 3 registered", "ok"]);
+    messages.push([c3.tArr, "Scan C-3: order complete → final 3/3 applied", "ok"]);
+    messages.push([b2.tArr, "Scan B-2: order complete → final 2/2 applied", "ok"]);
+    messages.push([pC1.finalT, "C-1 back from loop → final 1/3", "ok"]);
+    messages.push([pB1.finalT, "B-1 back from loop → final 1/2", "ok"]);
+    messages.push([pC2.finalT, "C-2 back from loop → final 2/3", "ok"]);
   }
 
   if (n === 4) {
-    duration = 27;
-    keyMessage = "Immediate correct labels when the packing proposal is right — but wrong parcels must be detected, diverted, and relabelled downstream.";
-    const DEV_T = 9.0; // deviation detected while packing parcel 3
-    // relabel spur geometry: divert at machine (5,0) -> (5,2.6) station -> (7,2.6) -> (7,0) rejoin
+    duration = 28;
+    keyMessage = "Ortec-predicted labels are instantly correct for well-modelled orders \u2014 only the mispredicted order needs detection, diversion, and relabelling.";
+    const DEV_T = 8.0; // deviation detected while packing C-3
     const relabelDetour = (tArr) => {
       const tScan = tArr + 1.0;
-      const pts = [
-        [tScan, 5, CONV_Y, 0],
-        [tScan + 1.4, 5, CONV_Y, 2.6],     // divert to station
-        [tScan + 3.6, 5, CONV_Y, 2.6],     // relabel dwell
-        [tScan + 4.6, 7, CONV_Y, 2.6],     // leave station
-        [tScan + 5.8, 7, CONV_Y, 0],       // rejoin main line
-      ];
-      return { pts, relabelT: tScan + 2.8, rejoinT: tScan + 5.8 };
+      return {
+        pts: [
+          [tScan, MACHINE_X, CONV_Y, 0],
+          [tScan + 1.4, MACHINE_X, CONV_Y, 3.4],
+          [tScan + 2.6, MACHINE_X + 3, CONV_Y, 3.4],
+          [tScan + 4.8, MACHINE_X + 3, CONV_Y, 3.4],
+          [tScan + 6.2, MACHINE_X + 6, CONV_Y, 3.4],
+          [tScan + 7.6, MACHINE_X + 6, CONV_Y, 0],
+        ],
+        relabelT: tScan + 3.6,
+        rejoinT: tScan + 7.6,
+      };
     };
-    const mk = (d) => ({ ...d, tEnter: d.move + 1.5, tArr: ride(d.move + 1.5, -6, MACHINE_X) });
-    const d1 = mk({ id: "P-4711-01", name: "Parcel 1", size: [0.75, 0.6, 0.75], spawn: 0, packEnd: 3, labelT: 3.2, move: 3.6 });
-    const d2 = mk({ id: "P-4711-02", name: "Parcel 2", size: [0.95, 0.5, 0.8], spawn: 4, packEnd: 7, labelT: 7.2, move: 7.6 });
-    const d3 = mk({ id: "P-4711-03", name: "Parcel 3", size: [1.1, 0.85, 0.85], spawn: 8, packEnd: 11, labelT: 11.2, move: 11.6 });
-    const d4 = mk({ id: "P-4711-04", name: "Parcel 4", size: [0.85, 0.65, 0.8], spawn: 11.5, packEnd: 14, labelT: 14.2, move: 14.6 });
-
-    // P1 & P2: proposal label x/3 -> flagged wrong at DEV_T -> diverted & relabelled x/4
-    [d1, d2].forEach((d, i) => {
-      const det = relabelDetour(d.tArr);
-      const tExit = ride(det.rejoinT + 0.2, 7, 15);
+    const mk = (d) => ({ ...d, tEnter: d.move + 1.5, tArr: ride(d.move + 1.5, entryX(d.st), MACHINE_X) });
+    const passThrough = (d, label, sub) => {
+      const tPass = d.tArr + 1.0;
+      const tExit = ride(tPass, MACHINE_X, CONV_END);
       parcels.push({
         ...d,
         path: [
-          ...packPath(d.spawn, d.move), ...toConv(d.move, d.tEnter).slice(1),
-          [d.tArr, MACHINE_X, CONV_Y, 0],
-          ...det.pts,
-          [tExit, 15, CONV_Y, 0],
+          ...packPath(d.st, d.spawn, d.move), ...toConv(d.st, d.move, d.tEnter).slice(1),
+          [d.tArr, MACHINE_X, CONV_Y, 0], [tPass, MACHINE_X, CONV_Y, 0], [tExit, CONV_END, CONV_Y, 0],
+        ],
+        labels: [[d.labelT, label, C.green, sub]],
+        seq: label, finalT: d.labelT, plan: d.plan,
+        conveyor: [d.tEnter, tExit], loop: [], stagingIv: null, relabelIv: null,
+      });
+    };
+    // A — proposal 1 parcel: correct
+    const a1 = mk(base(0, 1, { size: SZ.A1, spawn: 0, packEnd: 2.5, labelT: 2.7, move: 3.1, plan: 1 }));
+    passThrough(a1, "1/1", "Ortec proposal \u2713");
+    // B — proposal 2 parcels: correct
+    const b1 = mk(base(1, 1, { size: SZ.B1, spawn: 0.5, packEnd: 3, labelT: 3.2, move: 3.6, plan: 2 }));
+    const b2 = mk(base(1, 2, { size: SZ.B2, spawn: 4.5, packEnd: 7, labelT: 7.2, move: 7.6, plan: 2 }));
+    passThrough(b1, "1/2", "Ortec proposal \u2713");
+    passThrough(b2, "2/2", "Ortec proposal \u2713");
+    // C — proposal 3 parcels, actual 4: parcels 1 & 2 relabelled, 3 & 4 corrected at source
+    const c1 = mk(base(2, 1, { size: SZ.C1, spawn: 0, packEnd: 3, labelT: 3.2, move: 3.6, plan: 3 }));
+    const c2 = mk(base(2, 2, { size: SZ.C2, spawn: 3.2, packEnd: 6.2, labelT: 6.4, move: 6.8, plan: 3 }));
+    [c1, c2].forEach((d, i) => {
+      const det = relabelDetour(d.tArr);
+      const tExit = ride(det.rejoinT + 0.2, MACHINE_X + 6, CONV_END);
+      parcels.push({
+        ...d,
+        path: [
+          ...packPath(d.st, d.spawn, d.move), ...toConv(d.st, d.move, d.tEnter).slice(1),
+          [d.tArr, MACHINE_X, CONV_Y, 0], ...det.pts, [tExit, CONV_END, CONV_Y, 0],
         ],
         labels: [
-          [d.labelT, `${i + 1}/3`, C.green, "proposal-based"],
+          [d.labelT, `${i + 1}/3`, C.green, "Ortec proposal"],
           [DEV_T, `${i + 1}/3`, C.red, "label incorrect", true],
           [det.relabelT, `${i + 1}/4`, C.green, "relabelled"],
         ],
-        seq: `${i + 1}/4`, finalT: det.relabelT,
+        seq: `${i + 1}/4`, finalT: det.relabelT, plan: 3,
         conveyor: [d.tEnter, tExit], loop: [], stagingIv: null,
         relabelIv: [det.pts[0][0], det.rejoinT],
       });
-      messages.push([d.spawn, `Packing ${d.name}…`]);
-      messages.push([d.labelT, `Final label ${i + 1}/3 applied per packing proposal — released immediately`, "ok"]);
-      messages.push([d.tArr, `Verify scan: ${d.name} label ${i + 1}/3 ≠ actual count 4 → diverted to relabeling`, "err"]);
-      messages.push([det.relabelT, `${d.name} relabelled ${i + 1}/4 — returning to main line`, "ok"]);
+      messages.push([d.tArr, `Verify scan C-${i + 1}: label ${i + 1}/3 ≠ actual count 4 → relabeling`, "err"]);
+      messages.push([det.relabelT, `C-${i + 1} relabelled ${i + 1}/4 — returning to main line`, "ok"]);
     });
+    const c3 = mk(base(2, 3, { size: SZ.C3s, spawn: 7.5, packEnd: 10.5, labelT: 10.7, move: 11.1, plan: 3 }));
+    const c4 = mk(base(2, 4, { size: SZ.C4, spawn: 11, packEnd: 13.5, labelT: 13.7, move: 14.1, plan: 3 }));
+    passThrough(c3, "3/4", "corrected count");
+    passThrough(c4, "4/4", "corrected count");
+    parcels.forEach((p) => { if (p.order === "Order C") p.devT = DEV_T; });
 
-    // P3 & P4: labelled correctly x/4 after deviation known, pass machine directly
-    [d3, d4].forEach((d, i) => {
-      const tPass = d.tArr + 1.0;
-      const tExit = ride(tPass, MACHINE_X, 15);
+    scans.push(c1.tArr, b1.tArr, a1.tArr, c2.tArr, b2.tArr, c3.tArr, c4.tArr);
+
+    messages.push([0, "Ortec packing proposal from master data: A\u21921 \u00b7 B\u21922 \u00b7 C\u21923 parcels \u2014 final labels printed directly at pack", "info"]);
+    messages.push([2.7, "Order A: label 1/1 per Ortec proposal — released", "ok"]);
+    messages.push([3.2, "B-1 (1/2) and C-1 (1/3) labelled per proposal", "ok"]);
+    messages.push([DEV_T, "Deviation at Order C: contents exceed Ortec proposal → split, actual count = 4", "err"]);
+    messages.push([a1.tArr, "Verify scan A-1: label matches → passes", "ok"]);
+    messages.push([b2.tArr, "Verify scan B-2: label matches → passes", "ok"]);
+    messages.push([c3.labelT, "C-3 labelled 3/4 with corrected count", "ok"]);
+    messages.push([c3.tArr, "Verify scan C-3: label matches → passes", "ok"]);
+    messages.push([c4.labelT, "C-4 labelled 4/4 — order fully packed", "ok"]);
+  }
+
+  // S2-S4: prepend Ortec-routed infeed — totes travel the supply line to the
+  // capacity-matched station before packing starts (everything else shifts by OFF)
+  if (n >= 2) {
+    const OFF = 5;
+    parcels.forEach((p) => {
+      ["spawn", "packEnd", "move", "labelT", "interimT", "finalT", "stageIn", "release", "tEnter", "tArr", "devT"].forEach((k) => {
+        if (typeof p[k] === "number") p[k] += OFF;
+      });
+      p.path = p.path.map((w) => [w[0] + OFF, w[1], w[2], w[3]]);
+      p.labels = p.labels.map((L) => [L[0] + OFF, ...L.slice(1)]);
+      p.conveyor = [p.conveyor[0] + OFF, p.conveyor[1] + OFF];
+      p.loop = p.loop.map(([a, b]) => [a + OFF, b + OFF]);
+      if (p.stagingIv) p.stagingIv = [p.stagingIv[0] + OFF, p.stagingIv[1] + OFF];
+      if (p.relabelIv) p.relabelIv = [p.relabelIv[0] + OFF, p.relabelIv[1] + OFF];
+    });
+    for (let i = 0; i < messages.length; i++) messages[i] = [messages[i][0] + OFF, ...messages[i].slice(1)];
+    for (let i = 0; i < scans.length; i++) scans[i] += OFF;
+    duration += OFF;
+
+    const SPINE_Z = 7.6, SRC_X = 5.4, TS = 4;
+    ORDERS.forEach((O, oi) => {
+      const bx = STATIONS[O.station].x;
+      const dep = oi * 0.7;
+      const tSpine = dep + Math.abs(SRC_X - bx) / TS;
+      const tArr2 = tSpine + 1.0;
       parcels.push({
-        ...d,
+        tote: true, st: O.station, order: O.key, color: O.color, id: `TOTE-${O.key}`,
+        spawn: dep, despawn: tArr2 + 0.25, packEnd: -1, move: -1,
+        size: [1.05, 0.5, 0.75],
         path: [
-          ...packPath(d.spawn, d.move), ...toConv(d.move, d.tEnter).slice(1),
-          [d.tArr, MACHINE_X, CONV_Y, 0],
-          [tPass, MACHINE_X, CONV_Y, 0],
-          [tExit, 15, CONV_Y, 0],
+          [dep, SRC_X, CONV_Y + 0.06, SPINE_Z],
+          [tSpine, bx, CONV_Y + 0.06, SPINE_Z],
+          [tArr2, bx, 1.0, 4.0],
         ],
-        labels: [[d.labelT, `${i + 3}/4`, C.green, "corrected count"]],
-        seq: `${i + 3}/4`, finalT: d.labelT,
-        conveyor: [d.tEnter, tExit], loop: [], stagingIv: null, relabelIv: null,
+        labels: [], conveyor: [1e9, 1e9], loop: [], stagingIv: null,
       });
     });
-    messages.push([0, "Packing proposal from master data: predicted 3 parcels for order 4711", "info"]);
-    messages.push([8, "Packing Parcel 3…"]);
-    messages.push([DEV_T, "Deviation: contents exceed proposal → order split, actual count = 4 parcels", "err"]);
-    messages.push([d3.labelT, "Parcel 3 labelled 3/4 with corrected count", "ok"]);
-    messages.push([d4.labelT, "Parcel 4 labelled 4/4 — order 4711 fully packed (4 of 4)", "ok"]);
-    messages.push([d3.tArr, "Verify scan: Parcel 3 label matches → passes without detour", "ok"]);
-    messages.push([d4.tArr + 0.3, "Verify scan: Parcel 4 label matches → passes without detour", "ok"]);
-    scans.push(d1.tArr, d2.tArr, d3.tArr, d4.tArr);
+    messages.unshift([0, "Ortec proposal routes infeed: Order A \u2192 1-pc station \u00b7 Order B \u2192 2-pc station \u00b7 Order C \u2192 3-pc station", "info"]);
   }
 
   messages.sort((a, b) => a[0] - b[0]);
@@ -257,7 +383,7 @@ const SCENARIOS = {
   1: { title: "Immediate Final Label", short: "S1" },
   2: { title: "Consolidated Labelling", short: "S2" },
   3: { title: "Interim Label + Auto Relabelling", short: "S3" },
-  4: { title: "Predictive Proposal Labels", short: "S4" },
+  4: { title: "Ortec Proposal Labels", short: "S4" },
 };
 
 // ---------- path interpolation ----------
@@ -285,7 +411,7 @@ function makeLabelTexture(main, sub, color) {
   g.strokeStyle = color; g.lineWidth = 5;
   roundRect(g, 4, 4, 248, 120, 14); g.stroke();
   g.fillStyle = color;
-  g.font = "bold 44px 'IBM Plex Mono', monospace";
+  g.font = `bold ${main.length > 9 ? 30 : 44}px 'IBM Plex Mono', monospace`;
   g.textAlign = "center";
   g.fillText(main, 128, 58);
   g.fillStyle = "#c7d2e0";
@@ -293,6 +419,31 @@ function makeLabelTexture(main, sub, color) {
   g.fillText(sub || "", 128, 96);
   const tx = new THREE.CanvasTexture(cv);
   return tx;
+}
+// interim label rendered as a barcode sticker
+function makeBarcodeTexture(orderColor) {
+  const cv = document.createElement("canvas");
+  cv.width = 256; cv.height = 128;
+  const g = cv.getContext("2d");
+  g.fillStyle = "#f2f4f7";
+  roundRect(g, 4, 4, 248, 120, 10); g.fill();
+  g.strokeStyle = orderColor; g.lineWidth = 5;
+  roundRect(g, 4, 4, 248, 120, 10); g.stroke();
+  // order color stripe
+  g.fillStyle = orderColor;
+  g.fillRect(10, 10, 236, 12);
+  // barcode bars (deterministic pattern)
+  g.fillStyle = "#0d1219";
+  let x = 22;
+  const widths = [3, 6, 2, 5, 3, 2, 7, 3, 4, 2, 6, 3, 2, 5, 4, 3, 6, 2, 4, 5, 2, 3, 6, 4, 2, 5, 3];
+  for (let i = 0; i < widths.length && x < 230; i++) {
+    g.fillRect(x, 30, widths[i], 56);
+    x += widths[i] + (i % 2 === 0 ? 3 : 5);
+  }
+  g.font = "bold 18px 'IBM Plex Mono', monospace";
+  g.textAlign = "center";
+  g.fillText("INTERIM \u00b7 FINAL PENDING", 128, 110);
+  return new THREE.CanvasTexture(cv);
 }
 function roundRect(g, x, y, w, h, r) {
   g.beginPath();
@@ -330,10 +481,10 @@ export default function ParcelLabelSim() {
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(C.bg);
-    scene.fog = new THREE.Fog(C.bg, 40, 80);
+    scene.fog = new THREE.Fog(C.bg, 55, 110);
 
     const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 200);
-    const cam = { theta: -0.9, phi: 1.05, radius: 26, target: new THREE.Vector3(2, 0.5, 0) };
+    const cam = { theta: -0.9, phi: 1.05, radius: 41, target: new THREE.Vector3(3, 0.5, 1.5) };
     const applyCam = () => {
       const sp = Math.sin(cam.phi), cp = Math.cos(cam.phi);
       camera.position.set(
@@ -351,8 +502,8 @@ export default function ParcelLabelSim() {
     key.position.set(12, 20, 8);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
-    key.shadow.camera.left = -25; key.shadow.camera.right = 25;
-    key.shadow.camera.top = 25; key.shadow.camera.bottom = -25;
+    key.shadow.camera.left = -35; key.shadow.camera.right = 35;
+    key.shadow.camera.top = 35; key.shadow.camera.bottom = -35;
     scene.add(key);
     const fill = new THREE.DirectionalLight(0x88aaff, 0.25);
     fill.position.set(-10, 10, -10);
@@ -360,13 +511,13 @@ export default function ParcelLabelSim() {
 
     // floor
     const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(70, 50),
+      new THREE.PlaneGeometry(85, 55),
       new THREE.MeshStandardMaterial({ color: 0x1b2330, roughness: 0.95 })
     );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
-    const grid = new THREE.GridHelper(70, 70, 0x2a3648, 0x222d3c);
+    const grid = new THREE.GridHelper(85, 85, 0x2a3648, 0x222d3c);
     grid.position.y = 0.01;
     scene.add(grid);
 
@@ -376,52 +527,66 @@ export default function ParcelLabelSim() {
 
     const mat = (c, r = 0.7, m = 0.1) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m });
 
-    // packing table
-    const table = new THREE.Group();
-    const top = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.16, 2.2), mat(0x3a4657, 0.5, 0.3));
-    top.position.set(TABLE.x, 1.0, TABLE.z); top.castShadow = true;
-    table.add(top);
-    [[-1.4, -0.9], [1.4, -0.9], [-1.4, 0.9], [1.4, 0.9]].forEach(([dx, dz]) => {
-      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.0), mat(0x2a3441, 0.4, 0.5));
-      leg.position.set(TABLE.x + dx, 0.5, TABLE.z + dz);
-      table.add(leg);
+    // three packing stations (table + packer + printer + order sign each)
+    const packers = [];
+    const printerLights = [];
+    const printerPapers = [];
+    STATIONS.forEach((st, si) => {
+      const g = new THREE.Group();
+      // table
+      const top = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.16, 2.0), mat(0x3a4657, 0.5, 0.3));
+      top.position.set(st.x, 1.0, st.z); top.castShadow = true;
+      g.add(top);
+      [[-0.8, -0.8], [0.8, -0.8], [-0.8, 0.8], [0.8, 0.8]].forEach(([dx, dz]) => {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.0), mat(0x2a3441, 0.4, 0.5));
+        leg.position.set(st.x + dx, 0.5, st.z + dz);
+        g.add(leg);
+      });
+      // packer figure
+      const packer = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.9, 12), mat(0x4a5f78, 0.8));
+      body.position.y = 1.15; body.castShadow = true;
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), mat(0xd9a679, 0.9));
+      head.position.y = 1.85;
+      const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xffd166, 0.6));
+      helmet.position.y = 1.9;
+      const legs = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.7, 10), mat(0x22303f, 0.9));
+      legs.position.y = 0.45;
+      packer.add(body, head, helmet, legs);
+      packer.position.set(st.x, 0, st.z + 1.6);
+      g.add(packer);
+      packers.push(packer);
+      // printer
+      const pBody = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.6), mat(0x222b38, 0.5, 0.4));
+      pBody.position.set(st.x - 1.25, 1.33, st.z - 0.5); pBody.castShadow = true;
+      const pSlot = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.06, 0.1), mat(0x0d1219, 0.4));
+      pSlot.position.set(st.x - 1.25, 1.4, st.z - 0.16);
+      const pLight = new THREE.Mesh(new THREE.SphereGeometry(0.05), new THREE.MeshBasicMaterial({ color: C.green }));
+      pLight.position.set(st.x - 1.01, 1.5, st.z - 0.2);
+      g.add(pBody, pSlot, pLight);
+      printerLights.push(pLight);
+      const paper = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.3), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+      paper.position.set(st.x - 1.25, 1.28, st.z - 0.1);
+      paper.rotation.x = -0.4;
+      paper.visible = false;
+      g.add(paper);
+      printerPapers.push(paper);
+      props.add(g);
     });
-    props.add(table);
-
-    // packer (simple figure)
-    const packer = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.9, 12), mat(0x2f6fb0, 0.8));
-    body.position.y = 1.15; body.castShadow = true;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), mat(0xd9a679, 0.9));
-    head.position.y = 1.85;
-    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xffd166, 0.6));
-    helmet.position.y = 1.9;
-    const legs = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.7, 10), mat(0x22303f, 0.9));
-    legs.position.y = 0.45;
-    packer.add(body, head, helmet, legs);
-    packer.position.set(TABLE.x, 0, TABLE.z + 1.7);
-    props.add(packer);
-
-    // label printer at station
-    const printer = new THREE.Group();
-    const pBody = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.55, 0.7), mat(0x222b38, 0.5, 0.4));
-    pBody.position.set(TABLE.x - 1.9, 1.35, TABLE.z - 0.4); pBody.castShadow = true;
-    const pSlot = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 0.1), mat(0x0d1219, 0.4));
-    pSlot.position.set(TABLE.x - 1.9, 1.42, TABLE.z - 0.02);
-    const pLight = new THREE.Mesh(new THREE.SphereGeometry(0.05), new THREE.MeshBasicMaterial({ color: C.green }));
-    pLight.position.set(TABLE.x - 1.62, 1.55, TABLE.z - 0.06);
-    printer.add(pBody, pSlot, pLight);
-    props.add(printer);
-    // printer paper strip (animates on label print)
-    const paper = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.35), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
-    paper.position.set(TABLE.x - 1.9, 1.3, TABLE.z + 0.02);
-    paper.rotation.x = -0.4;
-    paper.visible = false;
-    props.add(paper);
+    // capacity group signs
+    [
+      ["1-PC STATIONS", -10.3],
+      ["2-PC STATIONS", -3.3],
+      ["3-PC STATION", 1.2],
+    ].forEach(([txt, sx]) => {
+      const sign = makeTextPlane(txt, "#8fa0b5", 3.2, 0.45);
+      sign.position.set(sx, 3.0, 3.2);
+      props.add(sign);
+    });
 
     // main conveyor
     const convGroup = new THREE.Group();
-    const beltLen = 21.5;
+    const beltLen = 43;
     const beltCv = document.createElement("canvas");
     beltCv.width = 128; beltCv.height = 32;
     const bg2 = beltCv.getContext("2d");
@@ -432,11 +597,11 @@ export default function ParcelLabelSim() {
     beltTex.wrapS = THREE.RepeatWrapping;
     beltTex.repeat.set(beltLen / 1.2, 1);
     const belt = new THREE.Mesh(new THREE.BoxGeometry(beltLen, 0.12, 1.3), new THREE.MeshStandardMaterial({ map: beltTex, roughness: 0.9 }));
-    belt.position.set(-6 + beltLen / 2, 0.62, 0);
+    belt.position.set(CONV_START + beltLen / 2, 0.62, 0);
     belt.receiveShadow = true; belt.castShadow = true;
     convGroup.add(belt);
     // conveyor frame + legs
-    for (let x = -5.5; x <= 15; x += 2.5) {
+    for (let x = CONV_START + 0.5; x <= CONV_END; x += 2.5) {
       const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.6, 1.1), mat(0x232c38, 0.5, 0.4));
       leg.position.set(x, 0.3, 0);
       convGroup.add(leg);
@@ -444,7 +609,7 @@ export default function ParcelLabelSim() {
     // side rails
     [-0.72, 0.72].forEach((dz) => {
       const rail = new THREE.Mesh(new THREE.BoxGeometry(beltLen, 0.08, 0.06), mat(0x4c5a6b, 0.4, 0.5));
-      rail.position.set(-6 + beltLen / 2, 0.86, dz);
+      rail.position.set(CONV_START + beltLen / 2, 0.86, dz);
       convGroup.add(rail);
     });
     props.add(convGroup);
@@ -452,47 +617,94 @@ export default function ParcelLabelSim() {
     // green flow arrows on main conveyor
     const arrowMat = new THREE.MeshBasicMaterial({ color: C.green });
     const arrows = [];
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 14; i++) {
       const a = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.4, 4), arrowMat);
       a.rotation.z = -Math.PI / 2;
       a.rotation.y = Math.PI / 4;
-      a.position.set(-5 + i * 3, 0.95, 0);
+      a.position.set(-14.5 + i * 3, 0.95, 0);
       convGroup.add(a);
       arrows.push(a);
     }
 
     // exit portal
     const exitFrame = new THREE.Mesh(new THREE.BoxGeometry(0.3, 2.4, 2.2), mat(0x26313f, 0.6));
-    exitFrame.position.set(15.2, 1.2, 0);
+    exitFrame.position.set(CONV_END + 0.2, 1.2, 0);
     props.add(exitFrame);
     const exitSign = makeTextPlane("OUTBOUND", C.green, 2.4, 0.5);
-    exitSign.position.set(15.2, 2.7, 0);
+    exitSign.position.set(CONV_END + 0.2, 2.7, 0);
     exitSign.rotation.y = -Math.PI / 2;
     props.add(exitSign);
 
-    // staging area (scenario 2)
+    // Ortec-routed infeed conveyors (scenarios 2-4): spine + capacity branches
+    const infeedGroup = new THREE.Group();
+    const spineMat = new THREE.MeshStandardMaterial({ color: 0x35424e, roughness: 0.9 });
+    const spine = new THREE.Mesh(new THREE.BoxGeometry(21.5, 0.12, 1.1), spineMat);
+    spine.position.set(-4.25, 0.62, 7.6);
+    spine.castShadow = true;
+    infeedGroup.add(spine);
+    for (let x = -13.5; x <= 5.5; x += 3.2) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.6, 0.9), mat(0x232c38, 0.5, 0.4));
+      leg.position.set(x, 0.3, 7.6);
+      infeedGroup.add(leg);
+    }
+    // infeed source
+    const srcBox = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.5, 1.7), mat(0x2b3a4d, 0.6, 0.3));
+    srcBox.position.set(6.6, 0.8, 7.6);
+    srcBox.castShadow = true;
+    infeedGroup.add(srcBox);
+    // branch belts to the assigned stations
+    ORDERS.forEach((O) => {
+      const bx = STATIONS[O.station].x;
+      const branch = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 3.6), spineMat);
+      branch.position.set(bx, 0.62, 5.9);
+      branch.castShadow = true;
+      infeedGroup.add(branch);
+      // branch marker in order color + capacity arrows toward the station
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.1), new THREE.MeshBasicMaterial({ color: new THREE.Color(O.color) }));
+      lamp.position.set(bx + 0.7, 1.15, 7.4);
+      infeedGroup.add(lamp);
+      [6.7, 5.4].forEach((az) => {
+        const a = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.36, 4), new THREE.MeshBasicMaterial({ color: new THREE.Color(O.color) }));
+        a.position.set(bx, 0.95, az);
+        a.rotation.x = -Math.PI / 2;
+        infeedGroup.add(a);
+      });
+    });
+    // spine flow arrows (towards -x)
+    for (let i = 0; i < 6; i++) {
+      const a = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.36, 4), new THREE.MeshBasicMaterial({ color: 0x8fa0b5 }));
+      a.position.set(4.5 - i * 3.2, 0.95, 7.6);
+      a.rotation.z = Math.PI / 2;
+      infeedGroup.add(a);
+    }
+    const routingSign = makeTextPlane("ORTEC ROUTING", "#4da3ff", 3.6, 0.5);
+    routingSign.position.set(-4.3, 2.3, 8.5);
+    infeedGroup.add(routingSign);
+    props.add(infeedGroup);
+
+    // staging area (scenario 2) — one consolidation strip, slots per order
     const staging = new THREE.Group();
-    const zone = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 2.6), new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.12 }));
+    const zone = new THREE.Mesh(new THREE.PlaneGeometry(18.4, 2.4), new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.12 }));
     zone.rotation.x = -Math.PI / 2;
-    zone.position.set(-4.5, 0.02, 4.6);
+    zone.position.set(-4.6, 0.02, 5.2);
     staging.add(zone);
     const zoneBorder = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.PlaneGeometry(5.6, 2.6)),
+      new THREE.EdgesGeometry(new THREE.PlaneGeometry(18.4, 2.4)),
       new THREE.LineBasicMaterial({ color: 0xffd166 })
     );
     zoneBorder.rotation.x = -Math.PI / 2;
-    zoneBorder.position.set(-4.5, 0.03, 4.6);
+    zoneBorder.position.set(-4.6, 0.03, 5.2);
     staging.add(zoneBorder);
-    [-6.2, -4.5, -2.8].forEach((x) => {
+    [-12.8, -5.8, -3.2, -0.4, 2.6, 3.8].forEach((x) => {
       const pallet = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.14, 1.3), mat(0x8a6a3d, 0.9));
-      pallet.position.set(x, 0.45, 4.6);
+      pallet.position.set(x, 0.45, 5.2);
       pallet.castShadow = true;
       const palletLegs = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.35, 1.1), mat(0x6f5531, 0.95));
-      palletLegs.position.set(x, 0.2, 4.6);
+      palletLegs.position.set(x, 0.2, 5.2);
       staging.add(pallet, palletLegs);
     });
     const stagingSign = makeTextPlane("ORDER CONSOLIDATION AREA", C.yellow, 5.4, 0.55);
-    stagingSign.position.set(-4.5, 2.2, 5.9);
+    stagingSign.position.set(-8.6, 2.2, 6.4);
     staging.add(stagingSign);
     props.add(staging);
 
@@ -523,10 +735,11 @@ export default function ParcelLabelSim() {
 
     // recirculation loop conveyor (scenario 3)
     const loopGroup = new THREE.Group();
+    const LX1 = MACHINE_X + 1.5, LX2 = MACHINE_X - 6.5;
     const loopSegs = [
-      [6.5, 0, 6.5, -4.2],
-      [6.5, -4.2, -1.5, -4.2],
-      [-1.5, -4.2, -1.5, 0],
+      [LX1, 0, LX1, -4.2],
+      [LX1, -4.2, LX2, -4.2],
+      [LX2, -4.2, LX2, 0],
     ];
     const loopBelts = [];
     loopSegs.forEach(([x1, z1, x2, z2]) => {
@@ -540,11 +753,11 @@ export default function ParcelLabelSim() {
     });
     // connector from machine to loop start
     const conn = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.12, 1.1), new THREE.MeshStandardMaterial({ color: 0x3a3026, roughness: 0.9 }));
-    conn.position.set(5.6, 0.62, 0);
+    conn.position.set(MACHINE_X + 0.6, 0.62, 0);
     loopGroup.add(conn);
     // orange loop arrows
     const loopArrows = [];
-    const loopPath = [[6.5, 0], [6.5, -4.2], [-1.5, -4.2], [-1.5, 0]];
+    const loopPath = [[LX1, 0], [LX1, -4.2], [LX2, -4.2], [LX2, 0]];
     for (let s = 0; s < 3; s++) {
       const [x1, z1] = loopPath[s], [x2, z2] = loopPath[s + 1];
       for (let f = 0.25; f < 1; f += 0.35) {
@@ -558,48 +771,104 @@ export default function ParcelLabelSim() {
       }
     }
     const loopSign = makeTextPlane("RECIRCULATION LOOP", C.orange, 4.4, 0.5);
-    loopSign.position.set(2.5, 1.8, -4.9);
+    loopSign.position.set(MACHINE_X - 2.5, 1.8, -4.9);
     loopGroup.add(loopSign);
     props.add(loopGroup);
 
-    // relabeling station (scenario 4) — side spur off the machine
+    // relabeling station (scenario 4) — long side spur integrated into the flow
     const relabelGroup = new THREE.Group();
     const spurMat = new THREE.MeshStandardMaterial({ color: 0x4a2f33, roughness: 0.9 });
-    const spur1 = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 3.0), spurMat);
-    spur1.position.set(5, 0.62, 1.6); spur1.castShadow = true;
-    const spur2 = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.12, 1.1), spurMat);
-    spur2.position.set(6, 0.62, 2.6); spur2.castShadow = true;
-    const spur3 = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 3.0), spurMat);
-    spur3.position.set(7, 0.62, 1.6); spur3.castShadow = true;
-    relabelGroup.add(spur1, spur2, spur3);
-    // relabel unit over the spur
+    const spurDown = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 3.8), spurMat);
+    spurDown.position.set(MACHINE_X, 0.62, 1.7); spurDown.castShadow = true;
+    const spurEast = new THREE.Mesh(new THREE.BoxGeometry(7.1, 0.12, 1.1), spurMat);
+    spurEast.position.set(MACHINE_X + 3, 0.62, 3.4); spurEast.castShadow = true;
+    const spurUp = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 3.8), spurMat);
+    spurUp.position.set(MACHINE_X + 6, 0.62, 1.7); spurUp.castShadow = true;
+    relabelGroup.add(spurDown, spurEast, spurUp);
+    for (let i = 0; i < 3; i++) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.6, 0.9), mat(0x232c38, 0.5, 0.4));
+      leg.position.set(MACHINE_X + 1 + i * 2, 0.3, 3.4);
+      relabelGroup.add(leg);
+    }
+    // relabel unit mid-spur
     const rMat = mat(0x7a3340, 0.45, 0.5);
     const rPillarA = new THREE.Mesh(new THREE.BoxGeometry(0.4, 2.2, 0.5), rMat);
-    rPillarA.position.set(4.2, 1.1, 2.6);
-    const rPillarB = rPillarA.clone(); rPillarB.position.x = 5.8;
+    rPillarA.position.set(MACHINE_X + 2.2, 1.1, 3.4);
+    const rPillarB = rPillarA.clone(); rPillarB.position.x = MACHINE_X + 3.8;
     const rBridge = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.7, 1.4), rMat);
-    rBridge.position.set(5, 2.1, 2.6); rBridge.castShadow = true;
+    rBridge.position.set(MACHINE_X + 3, 2.1, 3.4); rBridge.castShadow = true;
     relabelGroup.add(rPillarA, rPillarB, rBridge);
     const rLight = new THREE.Mesh(new THREE.SphereGeometry(0.09), new THREE.MeshBasicMaterial({ color: C.red }));
-    rLight.position.set(5, 2.6, 2.6);
+    rLight.position.set(MACHINE_X + 3, 2.6, 3.4);
     relabelGroup.add(rLight);
-    // red divert arrows
-    [[5, 0.6], [5, 1.6], [6.1, 2.6], [7, 1.6], [7, 0.6]].forEach(([ax, az], i) => {
+    // red flow arrows along the spur
+    const spurArrows = [
+      [MACHINE_X, 0.8, "down"], [MACHINE_X, 2.4, "down"],
+      [MACHINE_X + 1.3, 3.4, "east"], [MACHINE_X + 4.7, 3.4, "east"],
+      [MACHINE_X + 6, 2.4, "up"], [MACHINE_X + 6, 0.8, "up"],
+    ];
+    spurArrows.forEach(([ax, az, dir]) => {
       const a = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.36, 4), new THREE.MeshBasicMaterial({ color: C.red }));
       a.position.set(ax, 0.95, az);
-      a.rotation.x = Math.PI / 2;
-      if (i === 2) { a.rotation.x = 0; a.rotation.z = -Math.PI / 2; }
-      if (i > 2) a.rotation.z = Math.PI;
+      if (dir === "down") a.rotation.x = Math.PI / 2;
+      if (dir === "up") a.rotation.x = -Math.PI / 2;
+      if (dir === "east") a.rotation.z = -Math.PI / 2;
       relabelGroup.add(a);
     });
-    const relabelSign = makeTextPlane("RELABELING STATION", C.red, 4.2, 0.5);
-    relabelSign.position.set(6, 3.1, 3.4);
+    const relabelSign = makeTextPlane("RELABELING", C.red, 3.2, 0.5);
+    relabelSign.position.set(MACHINE_X + 3, 3.2, 4.3);
     relabelGroup.add(relabelSign);
     props.add(relabelGroup);
 
+    // Ortec packing proposal board (scenario 4)
+    const ortecGroup = new THREE.Group();
+    const oPost = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 2.2), mat(0x2a3441, 0.4, 0.5));
+    oPost.position.set(-8.2, 1.1, 6.0);
+    ortecGroup.add(oPost);
+    const ortecCv = document.createElement("canvas");
+    ortecCv.width = 512; ortecCv.height = 300;
+    const ortecTex = new THREE.CanvasTexture(ortecCv);
+    const ortecPanel = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 2.7), new THREE.MeshBasicMaterial({ map: ortecTex }));
+    ortecPanel.position.set(-8.2, 2.9, 6.0);
+    ortecGroup.add(ortecPanel);
+    props.add(ortecGroup);
+    let ortecState = null;
+    function drawOrtec(devKnown) {
+      if (ortecState === devKnown) return;
+      ortecState = devKnown;
+      const g = ortecCv.getContext("2d");
+      g.fillStyle = "#0a1018"; g.fillRect(0, 0, 512, 300);
+      g.strokeStyle = "#4da3ff"; g.lineWidth = 6; g.strokeRect(3, 3, 506, 294);
+      g.textAlign = "left";
+      g.fillStyle = "#4da3ff";
+      g.font = "bold 32px 'IBM Plex Mono', monospace";
+      g.fillText("ORTEC PACKING PROPOSAL", 24, 48);
+      g.fillStyle = "#8fa0b5";
+      g.font = "20px 'IBM Plex Mono', monospace";
+      g.fillText("predicted parcels \u2192 labels printed at pack", 24, 80);
+      g.font = "26px 'IBM Plex Mono', monospace";
+      const rows = [
+        ["Order A", "1 parcel ", "1/1", "#4da3ff", false],
+        ["Order B", "2 parcels", "1/2 2/2", "#ffd166", false],
+        devKnown
+          ? ["Order C", "3\u21924 pcs ", "x/4", "#ff5c5c", true]
+          : ["Order C", "3 parcels", "1/3 2/3 3/3", "#ff7ed4", false],
+      ];
+      rows.forEach((r, i) => {
+        const y = 128 + i * 44;
+        g.fillStyle = r[3];
+        g.fillText(`${r[0]}  ${r[1]}  ${r[2]}`, 24, y);
+      });
+      g.fillStyle = devKnown ? "#ff5c5c" : "#3ddc84";
+      g.font = "bold 24px 'IBM Plex Mono', monospace";
+      g.fillText(devKnown ? "DEVIATION: ORDER C SPLIT \u2192 4" : "PROPOSAL ACTIVE", 24, 276);
+      ortecTex.needsUpdate = true;
+    }
+    drawOrtec(false);
+
     // order banner
-    const orderSign = makeTextPlane("CUSTOMER ORDER 4711 — 3 PARCELS", "#e8edf4", 7.5, 0.7);
-    orderSign.position.set(TABLE.x + 1, 3.4, TABLE.z);
+    const orderSign = makeTextPlane("PACKING AREA — 7 STATIONS · ONE OUTBOUND LINE", "#e8edf4", 9.5, 0.7);
+    orderSign.position.set(-6, 4.4, 3.2);
     props.add(orderSign);
 
     // ---------- parcels ----------
@@ -609,12 +878,14 @@ export default function ParcelLabelSim() {
       parcelMeshes.length = 0;
       data.parcels.forEach((pd, i) => {
         const group = new THREE.Group();
-        const boxMat = new THREE.MeshStandardMaterial({ color: C.cardboard, roughness: 0.85 });
+        const boxMat = new THREE.MeshStandardMaterial({ color: pd.tote ? new THREE.Color(pd.color) : C.cardboard, roughness: pd.tote ? 0.6 : 0.85 });
         const box = new THREE.Mesh(new THREE.BoxGeometry(...pd.size), boxMat);
         box.castShadow = true;
-        // tape stripe
-        const tape = new THREE.Mesh(new THREE.BoxGeometry(pd.size[0] * 1.02, pd.size[1] * 1.02, pd.size[2] * 0.14), mat(0xa87a42, 0.8));
-        group.add(box, tape);
+        group.add(box);
+        if (!pd.tote) {
+          const tape = new THREE.Mesh(new THREE.BoxGeometry(pd.size[0] * 1.02, pd.size[1] * 1.02, pd.size[2] * 0.14), mat(0xa87a42, 0.8));
+          group.add(tape);
+        }
         // label sprite
         const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeLabelTexture("—", "", "#555"), transparent: true }));
         spr.scale.set(1.7, 0.85, 1);
@@ -660,14 +931,14 @@ export default function ParcelLabelSim() {
       g.fillText(state.mode === "verify" ? "LABEL VERIFY" : "AUTO LABELLER", 24, 46);
       g.fillStyle = "#e8edf4";
       g.font = "26px 'IBM Plex Mono', monospace";
-      g.fillText(`ORDER  4711`, 24, 92);
-      g.fillText(`PARCEL ${state.parcel || "—"}`, 24, 128);
+      g.fillText(`ORDER  ${state.order || "\u2014"}`, 24, 92);
+      g.fillText(`PARCEL ${state.parcel || "\u2014"}`, 24, 128);
       if (state.mode === "verify") {
         g.fillText(`PLAN ${state.plan}  ACT ${state.act}`, 24, 164);
         g.fillStyle = state.mismatch ? C.red : C.green;
-        g.fillText(state.mismatch ? "MISMATCH → DIVERT" : "LABELS CONSISTENT", 24, 204);
+        g.fillText(state.mismatch ? "MISMATCH \u2192 DIVERT" : "LABELS CONSISTENT", 24, 204);
       } else {
-        g.fillText(`REG    ${state.reg} / 3`, 24, 164);
+        g.fillText(`REG    ${state.reg} / ${state.total || 3}`, 24, 164);
         g.fillStyle = state.complete ? C.green : C.orange;
         g.fillText(state.complete ? "ORDER COMPLETE" : "ORDER INCOMPLETE", 24, 204);
       }
@@ -683,6 +954,8 @@ export default function ParcelLabelSim() {
       machine.visible = n === 3 || n === 4;
       loopGroup.visible = n === 3;
       relabelGroup.visible = n === 4;
+      ortecGroup.visible = n === 4;
+      infeedGroup.visible = n >= 2;
     }
     applyScenarioProps(1);
 
@@ -773,21 +1046,30 @@ export default function ParcelLabelSim() {
       // belt animation
       beltTex.offset.x -= dtReal * (S.playing ? S.speed : 0) * 1.6;
 
-      // packer bob when packing
-      const anyPacking = data.parcels.some((p) => t >= p.spawn && t < p.packEnd);
-      packer.position.y = anyPacking ? Math.abs(Math.sin(now * 0.008)) * 0.08 : 0;
-
-      // printer paper flash
-      const labelSoon = data.parcels.some((p) => p.labels.some((L) => !L[4] && L[0] <= p.move + 0.6 && Math.abs(t - L[0]) < 0.5)) && data.n !== 3;
-      const interimSoon = data.n === 3 && data.parcels.some((p) => Math.abs(t - p.labels[0][0]) < 0.5);
-      paper.visible = labelSoon || interimSoon;
-      pLight.material.color.set(paper.visible ? C.orange : C.green);
+      // packer bob & printer flash per station
+      packers.forEach((packer, si) => {
+        const anyPacking = data.parcels.some((p) => p.st === si && t >= p.spawn && t < p.packEnd);
+        packer.position.y = anyPacking ? Math.abs(Math.sin(now * 0.008)) * 0.08 : 0;
+      });
+      printerPapers.forEach((paper, si) => {
+        const stationLabelSoon = data.parcels.some(
+          (p) => p.st === si && p.labels.some((L) => !L[4] && L[0] <= p.move + 0.6 && Math.abs(t - L[0]) < 0.5)
+        );
+        paper.visible = stationLabelSoon;
+        printerLights[si].material.color.set(stationLabelSoon ? C.orange : C.green);
+      });
 
       // scanner beam pulse
       let beamOn = false;
       if (data.n === 3 || data.n === 4) {
         beamOn = data.scans.some((st) => t >= st && t <= st + 1.0);
         beam.material.opacity = beamOn ? 0.35 + 0.25 * Math.sin(now * 0.02) : 0;
+      }
+
+      // Ortec board state
+      if (data.n === 4) {
+        const devP = data.parcels.find((p) => p.devT !== undefined);
+        drawOrtec(devP ? t >= devP.devT : false);
       }
 
       // machine display state
@@ -800,14 +1082,24 @@ export default function ParcelLabelSim() {
           if (Math.abs(pos[1] - MACHINE_X) < 0.8 && Math.abs(pos[3]) < 0.8 && t >= p.conveyor[0]) { current = p.id; currentP = p; }
         });
         if (data.n === 3) {
-          let reg = 0;
-          data.parcels.forEach((p) => { if (t >= p.labels[0][0]) reg++; });
-          drawMachineDisplay({ parcel: current, reg, complete: reg >= 3, scans: scansN });
+          // per-order registration status of the parcel currently at the machine
+          let reg = 0, total = 3, orderNo = "\u2014";
+          if (currentP) {
+            orderNo = currentP.order;
+            total = currentP.orderSize;
+            data.parcels.forEach((p) => { if (p.order === currentP.order && t >= p.labels[0][0]) reg++; });
+          }
+          drawMachineDisplay({ parcel: current, order: orderNo, reg, total, complete: currentP ? reg >= total : false, scans: scansN });
         } else {
-          const devKnown = t >= 9.0;
-          const act = devKnown ? 4 : 3;
-          const mismatch = !!(currentP && currentP.relabelIv && t < currentP.relabelIv[1]);
-          drawMachineDisplay({ mode: "verify", parcel: current, plan: 3, act, mismatch, scans: scansN });
+          let plan = "\u2014", act = "\u2014", mismatch = false, orderNo = "\u2014";
+          if (currentP) {
+            orderNo = currentP.order;
+            plan = currentP.plan;
+            const devKnown = currentP.devT !== undefined && t >= currentP.devT;
+            act = devKnown ? currentP.plan + 1 : currentP.plan;
+            mismatch = !!(currentP.relabelIv && t < currentP.relabelIv[1]);
+          }
+          drawMachineDisplay({ mode: "verify", parcel: current, order: orderNo, plan, act, mismatch, scans: scansN });
         }
       }
 
@@ -817,13 +1109,13 @@ export default function ParcelLabelSim() {
       data.parcels.forEach((pd, i) => {
         const pm = parcelMeshes[i];
         if (!pm) return;
-        const visible = t >= pd.spawn;
+        const visible = t >= pd.spawn && !(pd.despawn && t >= pd.despawn);
         pm.group.visible = visible;
         if (!visible) return;
         const [, x, y, z] = posAt(pd.path, t);
         pm.group.position.set(x, y, z);
         // pack scale-in
-        if (t < pd.packEnd) {
+        if (!pd.tote && t < pd.packEnd) {
           const f = Math.min(1, (t - pd.spawn) / Math.max(0.1, pd.packEnd - pd.spawn));
           pm.group.scale.setScalar(0.25 + 0.75 * f);
         } else pm.group.scale.setScalar(1);
@@ -834,8 +1126,14 @@ export default function ParcelLabelSim() {
         if (li !== pm.appliedLabel) {
           pm.appliedLabel = li;
           if (li >= 0) {
-            const [, txt, col, sub] = pd.labels[li];
-            pm.spr.material.map = makeLabelTexture(txt === "INTERIM" ? "INTERIM" : `4711 · ${txt}`, txt === "INTERIM" ? "final label pending" : sub, col);
+            const [, txt, , sub, wrong] = pd.labels[li];
+            const oc = pd.color;
+            if (txt === "INTERIM") {
+              pm.spr.material.map = makeBarcodeTexture(oc);
+            } else {
+              const col = wrong ? C.red : oc;
+              pm.spr.material.map = makeLabelTexture(`Order ${pd.order} \u00b7 ${txt}`, sub, col);
+            }
             pm.spr.material.needsUpdate = true;
             pm.spr.visible = true;
           }
@@ -870,7 +1168,8 @@ export default function ParcelLabelSim() {
           } else pm.aux.visible = false;
         }
 
-        // stats
+        // stats (totes excluded)
+        if (pd.tote) return;
         if (t >= pd.packEnd) packed++;
         if (hasFinal) labelled++;
         if (inStaging) waiting++;
@@ -882,11 +1181,11 @@ export default function ParcelLabelSim() {
         }
         if (data.n === 3) {
           pd.loop.forEach(([a, b]) => { if (t >= a) waitSum += Math.min(t, b) - a; });
-          waitCount = 3;
+          waitCount = data.parcels.filter((p) => !p.tote).length;
         }
         if (data.n === 4) {
           if (pd.relabelIv && t >= pd.relabelIv[0]) waitSum += Math.min(t, pd.relabelIv[1]) - pd.relabelIv[0];
-          waitCount = 4;
+          waitCount = data.parcels.filter((p) => !p.tote).length;
         }
         // handling steps: label events passed + staging moves
         pd.labels.forEach(([lt]) => { if (t >= lt) handling++; });
@@ -971,19 +1270,20 @@ export default function ParcelLabelSim() {
     });
     S.data.messages.forEach((m) => events.push(m[0]));
     const next = events.filter((e) => e > S.t + 0.01).sort((a, b) => a - b)[0];
-    S.t = next !== undefined ? next : S.data.duration;
+    S.t = Math.min(next !== undefined ? next : S.data.duration, S.data.duration);
     S.playing = false;
   };
   const setSpd = (v) => { simRef.current.speed = v; setSpeed(v); };
   const setView = (name) => {
     const { cam, applyCam } = world.current;
     const views = {
-      Overview: { target: [2, 0.5, 0], theta: -0.9, phi: 1.05, radius: 26 },
-      "Packing Station": { target: [-8.5, 1, 2.5], theta: -0.6, phi: 1.0, radius: 10 },
-      "Staging Area": { target: [-4.5, 0.6, 4.6], theta: -0.4, phi: 0.95, radius: 9 },
-      "Label Machine": { target: [5, 1.5, 0], theta: -1.2, phi: 1.0, radius: 9 },
-      "Conveyor Loop": { target: [2.5, 0.5, -2], theta: -2.2, phi: 0.9, radius: 14 },
-      "Relabeling Station": { target: [6, 1.2, 1.8], theta: -0.5, phi: 0.95, radius: 10 },
+      Overview: { target: [3, 0.5, 1.5], theta: -0.9, phi: 1.05, radius: 41 },
+      "Packing Stations": { target: [-6, 1, 3.2], theta: -0.75, phi: 1.0, radius: 21 },
+      "Infeed Routing": { target: [-4.3, 0.8, 7], theta: -0.6, phi: 0.95, radius: 17 },
+      "Staging Area": { target: [-4.6, 0.6, 5.2], theta: -0.4, phi: 0.95, radius: 16 },
+      "Label Machine": { target: [MACHINE_X, 1.5, 0], theta: -1.2, phi: 1.0, radius: 10 },
+      "Conveyor Loop": { target: [MACHINE_X - 3.5, 0.5, -2], theta: -2.2, phi: 0.9, radius: 15 },
+      "Relabeling Station": { target: [MACHINE_X + 3, 1.2, 2.2], theta: -0.5, phi: 0.95, radius: 13 },
     };
     const v = views[name];
     cam.target.set(...v.target);
@@ -992,7 +1292,7 @@ export default function ParcelLabelSim() {
   };
 
   const data = simRef.current.data;
-  const nParcels = data.parcels.length;
+  const nParcels = data.parcels.filter((p) => !p.tote).length;
   const kind = hud.msgKind;
   const msgColor = kind === "ok" ? C.green : kind === "warn" ? C.orange : kind === "err" ? C.red : C.blue;
 
@@ -1007,7 +1307,7 @@ export default function ParcelLabelSim() {
     ["Additional automation required", "Low", "Low", "High", "Medium–High"],
     ["Risk of parcel waiting", "Low", "High", "Medium", "Low"],
     ["Packing-area space requirement", "Low", "High", "Low", "Low"],
-    ["Depends on master-data quality", "No", "No", "No", "Yes — critical"],
+    ["Depends on Ortec proposal accuracy", "No", "No", "No", "Yes — critical"],
   ];
 
   const btn = (active) => ({
@@ -1040,7 +1340,7 @@ export default function ParcelLabelSim() {
       <div style={{ padding: "10px 14px 8px", borderBottom: `1px solid ${C.line}`, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <div style={{ marginRight: "auto" }}>
           <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.3 }}>Multi-Parcel Order Labelling — Simulator</div>
-          <div style={{ fontSize: 11, color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>Order 4711 · 3 parcels · packing area only</div>
+          <div style={{ fontSize: 11, color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>Orders A · B · C — 3 stations, one outbound line</div>
         </div>
         {[1, 2, 3, 4].map((n) => (
           <button key={n} style={btn(scenario === n)} onClick={() => selectScenario(n)}>
@@ -1078,7 +1378,7 @@ export default function ParcelLabelSim() {
 
         {/* camera presets */}
         <div style={{ position: "absolute", bottom: 10, left: 10, display: "flex", flexDirection: "column", gap: 5 }}>
-          {["Overview", "Packing Station", scenario === 2 ? "Staging Area" : null, scenario === 3 || scenario === 4 ? "Label Machine" : null, scenario === 3 ? "Conveyor Loop" : null, scenario === 4 ? "Relabeling Station" : null]
+          {["Overview", "Packing Stations", scenario >= 2 ? "Infeed Routing" : null, scenario === 2 ? "Staging Area" : null, scenario === 3 || scenario === 4 ? "Label Machine" : null, scenario === 3 ? "Conveyor Loop" : null, scenario === 4 ? "Relabeling Station" : null]
             .filter(Boolean)
             .map((v) => (
               <button key={v} style={smallBtn(false)} onClick={() => setView(v)}>{v}</button>
@@ -1094,7 +1394,7 @@ export default function ParcelLabelSim() {
             <div style={{ padding: "6px 10px 10px" }}>
               {stat("Scenario", `S${scenario}`)}
               {stat("Sim time", `${hud.t.toFixed(1)}s`)}
-              {stat("Order", "4711")}
+              {stat("Orders", "A · B · C")}
               {stat("Packed", `${hud.packed} / ${nParcels}`, hud.packed === nParcels ? C.green : C.text)}
               {stat("Correct final labels", `${hud.labelled} / ${nParcels}`, hud.labelled === nParcels ? C.green : C.text)}
               {stat("Waiting (staging)", hud.waiting, hud.waiting ? C.yellow : C.dim)}
@@ -1138,7 +1438,7 @@ export default function ParcelLabelSim() {
                 <table style={{ borderCollapse: "collapse", width: "100%", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5 }}>
                   <thead>
                     <tr>
-                      {["Criterion", "S1 Immediate", "S2 Consolidated", "S3 Interim + Auto", "S4 Predictive"].map((h, i) => (
+                      {["Criterion", "S1 Immediate", "S2 Consolidated", "S3 Interim + Auto", "S4 Ortec Proposal"].map((h, i) => (
                         <th key={h} style={{ textAlign: i ? "center" : "left", padding: "7px 8px", borderBottom: `2px solid ${C.line}`, color: i === 0 ? C.dim : [null, C.green, C.yellow, C.blue, C.red][i] }}>{h}</th>
                       ))}
                     </tr>
