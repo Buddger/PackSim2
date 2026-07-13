@@ -1032,7 +1032,7 @@ export default function ParcelLabelSim() {
   );
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: C.bg, color: C.text, fontFamily: "'Space Grotesk', system-ui, sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, height: "100dvh", maxHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Space Grotesk', system-ui, sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
         * { box-sizing: border-box; } button:active { transform: translateY(1px); }`}</style>
 
@@ -1056,6 +1056,24 @@ export default function ParcelLabelSim() {
         {/* message banner */}
         <div style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", maxWidth: "92%", background: "rgba(13,18,25,0.9)", border: `1px solid ${msgColor}`, borderRadius: 10, padding: "8px 14px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: msgColor, textAlign: "center" }}>
           {hud.msg}
+        </div>
+
+        {/* floating play controls — always reachable, independent of bottom bar */}
+        <div style={{ position: "absolute", bottom: 14, right: 12, display: "flex", gap: 8, zIndex: 5 }}>
+          <button
+            onClick={playing ? doPause : doPlay}
+            style={{ width: 56, height: 56, borderRadius: "50%", border: `2px solid ${playing ? C.orange : C.green}`, background: "rgba(20,27,37,0.95)", color: playing ? C.orange : C.green, fontSize: 20, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.5)" }}
+            aria-label={playing ? "Pause" : "Start"}
+          >
+            {playing ? "❚❚" : "▶"}
+          </button>
+          <button
+            onClick={doReset}
+            style={{ width: 44, height: 44, alignSelf: "flex-end", borderRadius: "50%", border: `2px solid ${C.line}`, background: "rgba(20,27,37,0.95)", color: C.dim, fontSize: 16, cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.5)" }}
+            aria-label="Reset"
+          >
+            ↺
+          </button>
         </div>
 
         {/* camera presets */}
@@ -1148,7 +1166,7 @@ export default function ParcelLabelSim() {
       </div>
 
       {/* Playback bar */}
-      <div style={{ padding: "8px 12px", borderTop: `1px solid ${C.line}`, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", background: C.panel }}>
+      <div style={{ padding: "8px 12px", paddingBottom: "calc(8px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", background: C.panel }}>
         {!playing
           ? <button style={btn(true)} onClick={doPlay}>▶ Start</button>
           : <button style={btn(false)} onClick={doPause}>❚❚ Pause</button>}
