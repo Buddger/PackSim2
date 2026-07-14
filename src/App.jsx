@@ -2399,6 +2399,49 @@ export default function SupplyChainSim() {
     4: "Labels are created from the ORTEC packing proposal. Verification failures enter the correction loop and pass the scanner again.",
   };
 
+  const scenarioObjectives = {
+    1: {
+      eyebrow: "CURRENT STATE",
+      title: "Label immediately",
+      description: "Labels are printed as soon as each package is packed. Because the final number of Handling Units is still unknown, the labels show placeholders such as 1/X or 2/X.",
+      result: "Limitation: the final HU sequence is not available at label creation.",
+      accent: C.blue,
+    },
+    2: {
+      eyebrow: "THEORETICAL SCENARIO",
+      title: "Wait until complete",
+      description: "Packages are staged until the complete order has been packed. Final labels are then printed together with the correct Handling Unit sequence.",
+      result: "Result: 1/3 · 2/3 · 3/3 instead of 1/X · 2/X · 3/X.",
+      accent: C.green,
+    },
+    3: {
+      eyebrow: "THEORETICAL SCENARIO",
+      title: "Temporary label, final label later",
+      description: "Each package receives a temporary identifier and continues to flow. A downstream station applies the final shipping label after the complete order is known.",
+      result: "Benefit: continuous flow with correct final HU numbering.",
+      accent: C.orange,
+    },
+    4: {
+      eyebrow: "THEORETICAL SCENARIO",
+      title: "Label based on ORTEC proposal",
+      description: "The expected Handling Unit count is predicted before packing. Orders are routed to the appropriate station and labels can show the final HU sequence immediately.",
+      result: "Benefit: no staging, immediate labels and correction only when verification fails.",
+      accent: C.yellow,
+    },
+  };
+
+  const objective = scenarioObjectives[scenario];
+  const parseClockMinutes = (clock) => {
+    const match = String(clock || "09:00").match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return 9 * 60;
+    return Number(match[1]) * 60 + Number(match[2]);
+  };
+  const dayStartMinutes = 9 * 60;
+  const dayEndMinutes = 18 * 60;
+  const currentMinutes = Math.max(dayStartMinutes, Math.min(dayEndMinutes, parseClockMinutes(hud.clock)));
+  const dayProgress = ((currentMinutes - dayStartMinutes) / (dayEndMinutes - dayStartMinutes)) * 100;
+  const storageCutoffProgress = ((14 * 60 - dayStartMinutes) / (dayEndMinutes - dayStartMinutes)) * 100;
+
   const openExperience = (type) => {
     setShowLanding(false);
     if (type === "current") {
@@ -2477,6 +2520,10 @@ export default function SupplyChainSim() {
         </div>
 
         <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div style={{ minWidth: 116, padding: "7px 11px", border: `1px solid ${C.orange}`, borderRadius: 8, background: "rgba(255,140,66,0.09)", fontFamily: "'IBM Plex Mono', monospace", textAlign: "center" }}>
+            <div style={{ color: C.dim, fontSize: 8, letterSpacing: 1.1 }}>SIMULATION TIME</div>
+            <div style={{ color: C.text, fontSize: 18, fontWeight: 800, lineHeight: 1.15 }}>{hud.clock || "09:00"}</div>
+          </div>
           <div style={{ padding: "6px 9px", border: `1px solid ${C.line}`, borderRadius: 8, background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 }}>
             <span style={{ color: C.dim }}>SCENARIO </span>
             <span style={{ color: C.blue, fontWeight: 700 }}>S{scenario}</span>
@@ -2493,13 +2540,14 @@ export default function SupplyChainSim() {
         <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
 
 
-        {/* First-view guidance */}
-        {!playing && hud.t === 0 && (
-          <div style={{ position: "absolute", top: 12, left: 12, maxWidth: 290, background: "rgba(13,18,25,0.92)", border: `1px solid ${C.green}`, borderRadius: 10, padding: "10px 12px", boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
-            <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: 1.1, marginBottom: 5 }}>PACKING FOCUS</div>
-            <div style={{ fontSize: 12, lineHeight: 1.45, color: C.text }}>Select S1–S4 and start the packing flow. Open <b>Model Scope</b> to reveal the complete supply chain.</div>
-          </div>
-        )}
+        {/* Dynamic scenario objective */}
+        <div style={{ position: "absolute", top: 12, left: 12, width: 340, maxWidth: "calc(100% - 310px)", background: "rgba(13,18,25,0.94)", border: `1px solid ${objective.accent}`, borderRadius: 11, padding: "11px 13px", boxShadow: "0 8px 24px rgba(0,0,0,0.28)" }}>
+          <div style={{ color: objective.accent, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: 1.1, fontWeight: 800, marginBottom: 5 }}>{objective.eyebrow} · S{scenario}</div>
+          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>{objective.title}</div>
+          <div style={{ fontSize: 11.5, lineHeight: 1.48, color: C.text }}>{objective.description}</div>
+          <div style={{ marginTop: 8, paddingTop: 7, borderTop: `1px solid ${C.line}`, color: objective.accent, fontSize: 10.5, lineHeight: 1.4 }}>{objective.result}</div>
+          <div style={{ marginTop: 7, color: C.dim, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9 }}>OBJECTIVE · Correct HU sequence on every label — e.g. 1/3, 2/3, 3/3 instead of 1/X.</div>
+        </div>
 
                 {/* Right scenario panel */}
         <div className="desktop-side-panel" style={{ position: "absolute", top: 12, right: 12, width: 270, display: "flex", flexDirection: "column", gap: 9 }}>
@@ -2611,8 +2659,8 @@ export default function SupplyChainSim() {
         )}
       </div>
 
-      {/* Process control strip */}
-      <div style={{ padding: "7px 12px calc(7px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, background: C.panel, display: "flex", gap: 10, alignItems: "center", minHeight: 52 }}>
+      {/* Playback controls and express next-day timeline */}
+      <div style={{ padding: "7px 12px calc(8px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, background: C.panel, display: "grid", gridTemplateColumns: "auto auto minmax(300px, 1fr)", gap: 12, alignItems: "center", minHeight: 78 }}>
         <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
           {playing ? <button style={btn(false)} onClick={doPause}>❚❚ Pause</button> : <button style={btn(false)} onClick={doPlay}>▶ Continue</button>}
           <button style={smallBtn(false)} onClick={doReset}>↺ Reset</button>
@@ -2621,10 +2669,24 @@ export default function SupplyChainSim() {
         <div style={{ display: "flex", gap: 3 }}>
           {[0.5, 1, 2, 4].map((v) => <button key={v} style={smallBtn(speed === v)} onClick={() => setSpd(v)}>{v}x</button>)}
         </div>
-        <div style={{ flex: 1 }} />
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: C.dim, textAlign: "right", whiteSpace: "nowrap" }}>
-          <div style={{ color: C.orange }}>SORT → STORAGE · Ø 2.5 h</div>
-          <div>{hud.clock}</div>
+        <div style={{ minWidth: 0, fontFamily: "'IBM Plex Mono', monospace" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 5, fontSize: 9 }}>
+            <span style={{ color: C.text, fontWeight: 800 }}>EXPRESS NEXT DAY DELIVERY · CRITICAL PROCESS TIMES</span>
+            <span style={{ color: C.dim }}>Current time {hud.clock || "09:00"}</span>
+          </div>
+          <div style={{ position: "relative", height: 26, margin: "0 5px" }}>
+            <div style={{ position: "absolute", left: 0, right: 0, top: 12, height: 4, borderRadius: 4, background: C.line }} />
+            <div style={{ position: "absolute", left: 0, width: `${dayProgress}%`, top: 12, height: 4, borderRadius: 4, background: C.green }} />
+            <div style={{ position: "absolute", left: `${storageCutoffProgress}%`, top: 4, bottom: 0, width: 2, background: C.orange }} />
+            <div style={{ position: "absolute", left: `${dayProgress}%`, top: 8, width: 12, height: 12, marginLeft: -6, borderRadius: "50%", background: C.text, border: `2px solid ${C.green}`, boxShadow: `0 0 8px ${C.green}` }} />
+            <span style={{ position: "absolute", left: 0, top: 0, color: C.dim, fontSize: 8 }}>09:00</span>
+            <span style={{ position: "absolute", left: `${storageCutoffProgress}%`, top: 0, transform: "translateX(-50%)", color: C.orange, fontSize: 8, fontWeight: 800 }}>STORAGE ≤ 14:00</span>
+            <span style={{ position: "absolute", right: 0, top: 0, color: C.yellow, fontSize: 8, fontWeight: 800 }}>SHIPPING ≤ 18:00</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: C.dim, fontSize: 8.5, lineHeight: 1.35 }}>
+            <span>Goods must be available in storage by 14:00 to preserve sufficient picking and packing time.</span>
+            <span style={{ textAlign: "right" }}>The outbound truck must be fully loaded by 18:00 · OTS — On-Time Shipping.</span>
+          </div>
         </div>
       </div>
     </div>
