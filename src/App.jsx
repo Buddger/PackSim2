@@ -75,8 +75,10 @@ const RACK_PAL = { x: 12.6, z: 4 };
 const OUT_X = 19.5, OUT_Z = 0.8;
 const CUT_MIN = 14 * 60;   // 14:00 cutoff in minutes
 
-const fmtClock = (min) => {
-  const m = Math.max(0, Math.round(min));
+const fmtClock = (min, fallback = "09:00") => {
+  const numericMinutes = Number(min);
+  if (!Number.isFinite(numericMinutes)) return fallback;
+  const m = Math.max(0, Math.round(numericMinutes));
   return `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 };
 
@@ -752,6 +754,8 @@ function buildChainData(packScenario = 4) {
     mode: "chain",
     duration: pack.duration,
     inb, pack, linkActors, pickTimes, messages,
+    clockStart: inb.clockStart,
+    rate: inb.rate,
     keyMessage:
       "One continuous supply chain: goods received in the morning are unloaded, stored, picked, routed by the Ortec proposal to the matching packing station, labelled and shipped \u2014 the label-correction spur handles the one mispredicted order.",
   };
@@ -762,12 +766,15 @@ export default function SupplyChainSim() {
   const mountRef = useRef(null);
   const world = useRef({});
   const [scenario, setScenario] = useState(4);
-  const simRef = useRef({ t: 0, playing: false, speed: 1, showIn: true, showOut: true, data: buildChainData(4) });
+  const simRef = useRef({ t: 0, playing: false, speed: 1, showIn: false, showOut: true, showLink: false, showShipping: false, data: buildChainData(4) });
 
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [showIn, setShowIn] = useState(true);
+  const [showIn, setShowIn] = useState(false);
   const [showOut, setShowOut] = useState(true);
+  const [showLink, setShowLink] = useState(false);
+  const [showShipping, setShowShipping] = useState(false);
+  const [scopeOpen, setScopeOpen] = useState(false);
   const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
   const [panelOpen, setPanelOpen] = useState(true);
 
@@ -849,6 +856,9 @@ export default function SupplyChainSim() {
     const outboundRoot = new THREE.Group();
     const linkRoot = new THREE.Group();
     scene.add(inboundRoot, outboundRoot, linkRoot);
+    inboundRoot.visible = simRef.current.showIn;
+    outboundRoot.visible = simRef.current.showOut;
+    linkRoot.visible = simRef.current.showLink;
     const propsIn = new THREE.Group();
     inboundRoot.add(propsIn);
     const propsOut = new THREE.Group();
@@ -1189,41 +1199,45 @@ export default function SupplyChainSim() {
 
 
     // Shipping dock with fixed 18:00 departure and OTS KPI
-    zone(CONV_END + 3.8, 0, 7.4, 7.2, 0xff8c42, 0.11, propsOut);
+    // Kept in a dedicated group so the default view can focus only on packing.
+    const shippingGroup = new THREE.Group();
+    propsOut.add(shippingGroup);
+    shippingGroup.visible = simRef.current.showShipping;
+    zone(CONV_END + 3.8, 0, 7.4, 7.2, 0xff8c42, 0.11, shippingGroup);
 
     const shippingDockFrame = new THREE.Mesh(
       new THREE.BoxGeometry(0.38, 3.5, 3.7),
       mat(0x26313f, 0.55, 0.22)
     );
     shippingDockFrame.position.set(CONV_END + 1.15, 1.75, 0);
-    propsOut.add(shippingDockFrame);
+    shippingGroup.add(shippingDockFrame);
 
     const cutoffSign = makeTextPlane("TRUCK MUST BE LOADED BY 18:00", C.orange, 5.8, 0.72);
     cutoffSign.position.set(CONV_END + 1.2, 4.15, 0);
     cutoffSign.rotation.y = -Math.PI / 2;
-    propsOut.add(cutoffSign);
+    shippingGroup.add(cutoffSign);
 
     const otsSign = makeTextPlane("OTS · ON-TIME SHIPPING", C.green, 4.4, 0.62);
     otsSign.position.set(CONV_END + 1.2, 3.35, 0);
     otsSign.rotation.y = -Math.PI / 2;
-    propsOut.add(otsSign);
+    shippingGroup.add(otsSign);
 
     const departureClock = makeTextPlane("DEPARTURE 18:00", C.yellow, 3.4, 0.58);
     departureClock.position.set(CONV_END + 3.4, 3.3, -2.4);
-    propsOut.add(departureClock);
+    shippingGroup.add(departureClock);
 
     // The trailer rear is positioned at the dock; the cab points away from the warehouse.
     const shippingTruck = buildTruck(C.orange);
     shippingTruck.position.set(CONV_END + 4.25, 0, 0);
     shippingTruck.rotation.y = 0;
-    propsOut.add(shippingTruck);
+    shippingGroup.add(shippingTruck);
 
     const loadingBay = new THREE.Mesh(
       new THREE.BoxGeometry(2.4, 0.12, 2.6),
       new THREE.MeshBasicMaterial({ color: C.orange, transparent: true, opacity: 0.35 })
     );
     loadingBay.position.set(CONV_END + 1.65, 0.08, 0);
-    propsOut.add(loadingBay);
+    shippingGroup.add(loadingBay);
 
     // ORTEC-routed infeed conveyors for scenarios 2-4
     const infeedGroup = new THREE.Group();
@@ -2201,6 +2215,12 @@ export default function SupplyChainSim() {
     world.current = {
       cam, applyCam, fitRadius,
       setManualView: (name) => applyView(name, false),
+      setScope: ({ inbound, outbound, link, shipping }) => {
+        if (typeof inbound === "boolean") inboundRoot.visible = inbound;
+        if (typeof outbound === "boolean") outboundRoot.visible = outbound;
+        if (typeof link === "boolean") linkRoot.visible = link;
+        if (typeof shipping === "boolean") shippingGroup.visible = shipping;
+      },
     };
 
     return () => {
@@ -2237,8 +2257,16 @@ export default function SupplyChainSim() {
     setHud((h) => ({ ...h, t: startTime, done: false, msg: message, msgKind: "info" }));
 
   };
-  const startInbound = () => startAt(0, "Inbound started — trucks arrive at the receiving gates", "Full Chain");
-  const startPacking = () => startAt(PACK_OFF, `Packing started at ITEMS TO BE PACKED — ${SCENARIOS[scenario].title}`, "Packing Stations");
+  const startInbound = () => {
+    showFullChain();
+    world.current.setManualView?.("Full Chain");
+    startAt(0, "Inbound started — trucks arrive at the receiving gates", "Full Chain");
+  };
+  const startPacking = () => {
+    showPackingOnly();
+    world.current.setManualView?.("Packing Stations");
+    startAt(PACK_OFF, `Packing started at ITEMS TO BE PACKED — ${SCENARIOS[scenario].title}`, "Packing Stations");
+  };
   const doPlay = () => { simRef.current.playing = true; setPlaying(true); };
   const doPause = () => { simRef.current.playing = false; setPlaying(false); };
   const doReset = () => {
@@ -2275,9 +2303,23 @@ export default function SupplyChainSim() {
     setHud({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: `S${nextScenario}: ${SCENARIOS[nextScenario].title} selected — choose a start mode`, msgKind: "info", done: false });
   };
   const setSpd = (v) => { simRef.current.speed = v; setSpeed(v); };
-  const toggleIn = () => setShowIn((v) => { simRef.current.showIn = !v; return !v; });
-  const toggleOut = () => setShowOut((v) => { simRef.current.showOut = !v; return !v; });
-  const setView = (name) => world.current.setManualView?.(name);
+  const applyScope = ({ inbound = showIn, outbound = showOut, link = showLink, shipping = showShipping }) => {
+    setShowIn(inbound); setShowOut(outbound); setShowLink(link); setShowShipping(shipping);
+    Object.assign(simRef.current, { showIn: inbound, showOut: outbound, showLink: link, showShipping: shipping });
+    world.current.setScope?.({ inbound, outbound, link, shipping });
+  };
+  const showPackingOnly = () => applyScope({ inbound: false, outbound: true, link: false, shipping: false });
+  const showFullChain = () => applyScope({ inbound: true, outbound: true, link: true, shipping: true });
+  const toggleIn = () => applyScope({ inbound: !showIn });
+  const toggleOut = () => applyScope({ outbound: !showOut });
+  const toggleLink = () => applyScope({ link: !showLink });
+  const toggleShipping = () => applyScope({ shipping: !showShipping });
+  const setView = (name) => {
+    if (["Inbound Docks", "Sorting", "Storage & Picking"].includes(name)) applyScope({ inbound: true });
+    if (name === "Storage & Picking") applyScope({ inbound: true, link: true });
+    if (name === "Shipping") applyScope({ shipping: true });
+    world.current.setManualView?.(name);
+  };
 
   const data = simRef.current.data;
   const kind = hud.msgKind;
@@ -2307,7 +2349,7 @@ export default function SupplyChainSim() {
       eventT,
       text,
       eventKind: eventKind || "info",
-      clock: fmtClock(data.clockStart + eventT * data.rate),
+      clock: fmtClock(data.clockStart + eventT * data.rate, hud.clock || "09:00"),
       isLatest: index === visibleEvents.length - 1,
     }));
 
@@ -2348,7 +2390,7 @@ export default function SupplyChainSim() {
         <div style={{ marginRight: "auto", minWidth: 0 }}>
           <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: 0.2 }}>Supply Chain Digital Twin</div>
           <div className="header-subtitle" style={{ fontSize: 11, color: C.dim, fontFamily: "'IBM Plex Mono', monospace", marginTop: 2 }}>
-            Inbound → Storage → Picking → Packing → Shipping
+            Packing simulation · Expand the full chain when needed
           </div>
         </div>
 
@@ -2367,7 +2409,16 @@ export default function SupplyChainSim() {
       <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
         <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
 
-        {/* Right scenario panel */}
+
+        {/* First-view guidance */}
+        {!playing && hud.t === 0 && (
+          <div style={{ position: "absolute", top: 12, left: 12, maxWidth: 290, background: "rgba(13,18,25,0.92)", border: `1px solid ${C.green}`, borderRadius: 10, padding: "10px 12px", boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
+            <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: 1.1, marginBottom: 5 }}>PACKING FOCUS</div>
+            <div style={{ fontSize: 12, lineHeight: 1.45, color: C.text }}>Select S1–S4 and start the packing flow. Open <b>Model Scope</b> to reveal the complete supply chain.</div>
+          </div>
+        )}
+
+                {/* Right scenario panel */}
         <div className="desktop-side-panel" style={{ position: "absolute", top: 12, right: 12, width: 270, display: "flex", flexDirection: "column", gap: 9 }}>
           <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden" }}>
             <div style={{ padding: "9px 11px", background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>PACKING SCENARIOS</div>
@@ -2424,18 +2475,22 @@ export default function SupplyChainSim() {
             </div>}
           </div>
 
-          <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, padding: 10, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 }}>
-            <div style={{ fontWeight: 700, letterSpacing: 1, marginBottom: 7 }}>LEGEND</div>
-            {[
-              [C.blue, "Inbound"],
-              [C.yellow, "Storage & Picking"],
-              [C.green, "Packing"],
-              [C.orange, "Shipping"],
-              ["#f3f5f7", "ORTEC Routing"],
-            ].map(([color, label]) => <div key={label} style={{ display: "flex", gap: 8, alignItems: "center", padding: "3px 0", color: C.dim }}><span style={{ width: 9, height: 9, borderRadius: 2, background: color }} />{label}</div>)}
-            <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
-              <button style={{ ...smallBtn(showIn), flex: 1 }} onClick={toggleIn}>{showIn ? "◉" : "○"} Inbound</button>
-              <button style={{ ...smallBtn(showOut), flex: 1 }} onClick={toggleOut}>{showOut ? "◉" : "○"} Outbound</button>
+          <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 }}>
+            <div onClick={() => setScopeOpen((v) => !v)} style={{ padding: "8px 10px", background: C.panel2, cursor: "pointer", display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
+              <span>MODEL SCOPE</span><span>{scopeOpen ? "−" : "+"}</span>
+            </div>
+            <div style={{ padding: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+              <button style={smallBtn(!showIn && showOut && !showLink && !showShipping)} onClick={showPackingOnly}>Packing only</button>
+              <button style={smallBtn(showIn && showOut && showLink && showShipping)} onClick={showFullChain}>Full chain</button>
+            </div>
+            {scopeOpen && <div style={{ padding: "0 8px 9px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
+              <button style={smallBtn(showIn)} onClick={toggleIn}>{showIn ? "◉" : "○"} Inbound + Storage</button>
+              <button style={smallBtn(showLink)} onClick={toggleLink}>{showLink ? "◉" : "○"} Picking link</button>
+              <button style={smallBtn(showOut)} onClick={toggleOut}>{showOut ? "◉" : "○"} Packing</button>
+              <button style={smallBtn(showShipping)} onClick={toggleShipping}>{showShipping ? "◉" : "○"} Shipping</button>
+            </div>}
+            <div style={{ padding: "7px 9px", borderTop: `1px solid ${C.line}`, color: C.dim, lineHeight: 1.45 }}>
+              Default: packing process only. Camera views automatically reveal hidden areas.
             </div>
           </div>
         </div>
@@ -2444,7 +2499,7 @@ export default function SupplyChainSim() {
         <div style={{ position: "absolute", bottom: 54, left: 12, width: 178, background: "rgba(13,18,25,0.92)", border: `1px solid ${C.line}`, borderRadius: 10, padding: 9, boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: 1.2, color: C.dim, marginBottom: 7 }}>CAMERA VIEWS</div>
           <div style={{ display: "grid", gap: 4 }}>
-            {["Full Chain", "Inbound Docks", "Storage & Picking", "Packing Stations", "Label Check", "Shipping"].map((v) => (
+            {["Packing Stations", "Items to be packed", "Label Check", "Full Chain", "Inbound Docks", "Storage & Picking", "Shipping"].map((v) => (
               <button key={v} style={{ ...smallBtn(false), textAlign: "left", width: "100%", background: "rgba(26,35,49,0.9)" }} onClick={() => setView(v)}>
                 ○ {v === "Full Chain" ? "Overview" : v}
               </button>
