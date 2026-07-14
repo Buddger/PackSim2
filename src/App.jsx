@@ -44,7 +44,7 @@ const ORDERS = [
 ];
 
 const SCENARIOS = {
-  1: { title: "Label immediately", short: "Immediate label" },
+  1: { title: "Label immediately · Current state", short: "Current state" },
   2: { title: "Wait, then label", short: "Wait, then label" },
   3: { title: "Temporary label, final label later", short: "Interim + final" },
   4: { title: "Label based on ORTEC proposal", short: "ORTEC proposal" },
@@ -777,6 +777,7 @@ export default function SupplyChainSim() {
   const [scopeOpen, setScopeOpen] = useState(false);
   const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
   const [panelOpen, setPanelOpen] = useState(true);
+  const [showLanding, setShowLanding] = useState(true);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -1840,6 +1841,7 @@ export default function SupplyChainSim() {
       dispTex.needsUpdate = true;
     }
     drawMachineDisplay({ parcel: "—", reg: 0, complete: false, scans: 0 });
+    let lastMachineDisplayKey = "";
 
 
     // ---------- camera controls ----------
@@ -1967,6 +1969,7 @@ export default function SupplyChainSim() {
         buildActorList(dI.actors, inboundRoot, inMeshes);
         buildActorList(data.linkActors, linkRoot, linkMeshes);
         buildPackParcels(dP);
+        lastMachineDisplayKey = "";
         S.rebuilt = false;
       }
 
@@ -2042,7 +2045,12 @@ export default function SupplyChainSim() {
             total = currentP.orderSize;
             dP.parcels.forEach((p) => { if (p.order === currentP.order && t >= p.labels[0][0]) reg++; });
           }
-          drawMachineDisplay({ parcel: current, order: orderNo, reg, total, complete: currentP ? reg >= total : false, scans: scansN });
+          const displayState = { parcel: current, order: orderNo, reg, total, complete: currentP ? reg >= total : false, scans: scansN };
+          const displayKey = JSON.stringify(displayState);
+          if (displayKey !== lastMachineDisplayKey) {
+            lastMachineDisplayKey = displayKey;
+            drawMachineDisplay(displayState);
+          }
         } else {
           let plan = "\u2014", act = "\u2014", mismatch = false, orderNo = "\u2014";
           if (currentP) {
@@ -2052,7 +2060,12 @@ export default function SupplyChainSim() {
             act = devKnown ? currentP.plan + 1 : currentP.plan;
             mismatch = !!(currentP.relabelIv && t < currentP.relabelIv[1]);
           }
-          drawMachineDisplay({ mode: "verify", parcel: current, order: orderNo, plan, act, mismatch, scans: scansN });
+          const displayState = { mode: "verify", parcel: current, order: orderNo, plan, act, mismatch, scans: scansN };
+          const displayKey = JSON.stringify(displayState);
+          if (displayKey !== lastMachineDisplayKey) {
+            lastMachineDisplayKey = displayKey;
+            drawMachineDisplay(displayState);
+          }
         }
       }
 
@@ -2367,11 +2380,67 @@ export default function SupplyChainSim() {
     eventKind === "ok" ? C.green : eventKind === "warn" ? C.orange : eventKind === "err" ? C.red : C.blue;
 
   const scenarioDescriptions = {
-    1: "Labels are printed immediately. The final package count is still unknown, so labels show 1/X, 2/X or 3/X.",
+    1: "CURRENT STATE: Labels are printed immediately. The final package count is still unknown, so labels show 1/X, 2/X or 3/X.",
     2: "Packages wait in staging until the complete order is packed. Final labels are then applied together.",
     3: "Packages receive interim labels and move directly to the conveyor. Final labels are applied later, including a scanner loop when required.",
     4: "Labels are created from the ORTEC packing proposal. Verification failures enter the correction loop and pass the scanner again.",
   };
+
+  const openExperience = (type) => {
+    setShowLanding(false);
+    if (type === "current") {
+      changeScenario(1);
+      showPackingOnly();
+      window.setTimeout(startPacking, 0);
+    } else if (type === "theoretical") {
+      changeScenario(2);
+      showPackingOnly();
+    } else {
+      changeScenario(4);
+      showFullChain();
+    }
+  };
+
+  if (showLanding) {
+    const landingCard = (accent) => ({
+      background: "rgba(20,27,37,0.96)", border: `1px solid ${accent}`, borderRadius: 16,
+      padding: 20, textAlign: "left", color: C.text, cursor: "pointer", minHeight: 210,
+      display: "flex", flexDirection: "column", boxShadow: "0 14px 34px rgba(0,0,0,.22)"
+    });
+    return (
+      <div style={{ minHeight: "100vh", background: `radial-gradient(circle at 50% 0%, ${C.panel2} 0%, ${C.bg} 55%)`, color: C.text, fontFamily: "'Inter', system-ui, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ width: "min(1120px, 100%)" }}>
+          <div style={{ marginBottom: 28, maxWidth: 800 }}>
+            <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 800, letterSpacing: 1.5, marginBottom: 10 }}>SUPPLY CHAIN DIGITAL TWIN</div>
+            <h1 style={{ margin: 0, fontSize: "clamp(30px, 5vw, 54px)", lineHeight: 1.05 }}>Explore the packing process and its operational dependencies</h1>
+            <p style={{ color: C.dim, fontSize: 16, lineHeight: 1.65, maxWidth: 780, margin: "16px 0 0" }}>This interactive 3D world visualizes how goods move from inbound through storage and picking into four alternative packing and labelling scenarios. Select the perspective that is most relevant for your discussion.</p>
+          </div>
+          <div className="landing-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16 }}>
+            <button onClick={() => openExperience("current")} style={landingCard(C.blue)}>
+              <div style={{ color: C.blue, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 800, letterSpacing: 1.2 }}>01 · CURRENT STATE</div>
+              <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>Label immediately</h2>
+              <p style={{ color: C.dim, lineHeight: 1.55, margin: 0 }}>See today’s packing flow, where labels are printed immediately although the final number of packages is not yet known.</p>
+              <div style={{ marginTop: "auto", paddingTop: 18, color: C.blue, fontWeight: 800 }}>Open current state →</div>
+            </button>
+            <button onClick={() => openExperience("theoretical")} style={landingCard(C.green)}>
+              <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 800, letterSpacing: 1.2 }}>02 · THEORETICAL SCENARIOS</div>
+              <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>Compare S2–S4</h2>
+              <p style={{ color: C.dim, lineHeight: 1.55, margin: 0 }}>Explore staging, interim-label loops and predictive ORTEC proposals as alternative future-state concepts.</p>
+              <div style={{ marginTop: "auto", paddingTop: 18, color: C.green, fontWeight: 800 }}>Explore scenarios →</div>
+            </button>
+            <button onClick={() => openExperience("gaps")} style={landingCard(C.orange)}>
+              <div style={{ color: C.orange, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 800, letterSpacing: 1.2 }}>03 · PROCESS GAP VISUALIZATION</div>
+              <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>See the full chain</h2>
+              <p style={{ color: C.dim, lineHeight: 1.55, margin: 0 }}>Reveal inbound lead time, storage, picking, packing and the 18:00 OTS cutoff to discuss where process gaps create customer impact.</p>
+              <div style={{ marginTop: "auto", paddingTop: 18, color: C.orange, fontWeight: 800 }}>Open full chain →</div>
+            </button>
+          </div>
+          <div style={{ marginTop: 18, color: C.dim, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>You can switch scenarios, model scope and camera views at any time inside the 3D experience.</div>
+        </div>
+        <style>{`@media (max-width: 820px) { .landing-grid { grid-template-columns: 1fr !important; } }`}</style>
+      </div>
+    );
+  }
 
   return (
     <div style={{ position: "absolute", inset: 0, background: C.bg, color: C.text, fontFamily: "'Space Grotesk', system-ui, sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -2400,6 +2469,7 @@ export default function SupplyChainSim() {
             <span style={{ color: C.blue, fontWeight: 700 }}>S{scenario}</span>
             <span style={{ color: C.text }}> · {SCENARIOS[scenario].short}</span>
           </div>
+          <button style={{ ...btn(false), borderColor: C.line, color: C.dim }} onClick={() => { doPause(); setShowLanding(true); }}>⌂ Home</button>
           <button style={btn(true)} onClick={startInbound}>▶ Start in Inbound</button>
           <button style={{ ...btn(false), borderColor: C.green, color: C.green }} onClick={startPacking}>▶ Start with Packing</button>
         </div>
