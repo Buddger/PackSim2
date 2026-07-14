@@ -779,7 +779,6 @@ export default function SupplyChainSim() {
   const [startPoint, setStartPoint] = useState("packing");
   const startPointRef = useRef("packing");
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [comparisonOpen, setComparisonOpen] = useState(false);
   const [guidedDemo, setGuidedDemo] = useState(false);
   const guidedTimersRef = useRef([]);
   const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
@@ -2458,19 +2457,6 @@ export default function SupplyChainSim() {
     },
   };
 
-  const scenarioOutcomes = {
-    1: { hu: "No", handling: "Low", interruption: "No", automation: "Low", summary: "Fast flow, but the final HU count is not available when the label is printed." },
-    2: { hu: "Yes", handling: "Medium", interruption: "Yes", automation: "Medium", summary: "Correct labels, but packages must wait in staging until the order is complete." },
-    3: { hu: "Yes, later", handling: "High", interruption: "Possible", automation: "Medium", summary: "Continuous packing flow, with downstream relabeling and a scanner loop for incomplete orders." },
-    4: { hu: "Yes", handling: "Low", interruption: "Exceptions only", automation: "High", summary: "The ORTEC proposal enables immediate correct labels; only prediction errors require correction." },
-  };
-  const comparisonRows = [
-    ["S1", "No", "No", "No"],
-    ["S2", "Yes", "Yes", "No"],
-    ["S3", "Later", "No", "Yes"],
-    ["S4", "Yes", "No", "Exceptions"],
-  ];
-  const outcome = scenarioOutcomes[scenario];
 
   const objective = scenarioObjectives[scenario];
   const availableCameraViews = [
@@ -2624,25 +2610,7 @@ export default function SupplyChainSim() {
               <span>SCENARIO DETAILS</span><span>{detailsOpen ? "−" : "+"}</span>
             </button>
             {detailsOpen && <div style={{ padding: "9px 10px", color: C.dim, fontSize: 10.5, lineHeight: 1.48, borderTop: `1px solid ${C.line}` }}>{scenarioDescriptions[scenario]}</div>}
-            <div style={{ padding: "9px 10px", borderTop: `1px solid ${C.line}`, background: "rgba(61,220,132,0.035)" }}>
-              <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 800, letterSpacing: 1, marginBottom: 7 }}>SCENARIO OUTCOME</div>
-              <div style={{ color: C.text, fontSize: 10.5, lineHeight: 1.42, marginBottom: 8 }}>{outcome.summary}</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "5px 10px", fontSize: 9.5 }}>
-                <span style={{ color: C.dim }}>Correct HU sequence</span><b style={{ color: outcome.hu.startsWith("No") ? C.red : C.green }}>{outcome.hu}</b>
-                <span style={{ color: C.dim }}>Additional handling</span><b>{outcome.handling}</b>
-                <span style={{ color: C.dim }}>Flow interruption</span><b>{outcome.interruption}</b>
-                <span style={{ color: C.dim }}>Automation potential</span><b style={{ color: outcome.automation === "High" ? C.green : C.text }}>{outcome.automation}</b>
-              </div>
-            </div>
-            <button onClick={() => setComparisonOpen((v) => !v)} style={{ width: "100%", border: 0, borderTop: `1px solid ${C.line}`, background: "rgba(26,35,49,.82)", color: C.dim, padding: "8px 10px", cursor: "pointer", display: "flex", justifyContent: "space-between", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9 }}>
-              <span>SCENARIO COMPARISON</span><span>{comparisonOpen ? "−" : "+"}</span>
-            </button>
-            {comparisonOpen && <div style={{ padding: 8, borderTop: `1px solid ${C.line}`, overflowX: "auto" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 1fr 1fr", gap: 4, minWidth: 225, fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5 }}>
-                {["", "Correct HU", "Staging", "Relabel"].map((h, i) => <b key={i} style={{ color: C.dim, padding: "4px 2px" }}>{h}</b>)}
-                {comparisonRows.flatMap((row) => row.map((cell, i) => <span key={`${row[0]}-${i}`} style={{ padding: "5px 2px", color: i === 0 ? (row[0] === `S${scenario}` ? C.green : C.blue) : C.text, borderTop: `1px solid ${C.line}` }}>{cell}</span>))}
-              </div>
-            </div>}
+
           </div>
 
           <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 10px 30px rgba(0,0,0,.18)" }}>
@@ -2694,9 +2662,13 @@ export default function SupplyChainSim() {
       <div style={{ padding: "7px 12px calc(8px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, background: C.panel, display: "grid", gridTemplateColumns: "minmax(290px, auto) auto auto minmax(300px, 1fr)", gap: 14, alignItems: "stretch", minHeight: 84 }}>
         <div style={{ minWidth: 0, padding: "8px 11px", border: `1px solid ${C.line}`, borderRadius: 10, background: "rgba(13,18,25,0.62)", boxShadow: "inset -1px 0 0 rgba(255,255,255,0.03)" }}>
           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, letterSpacing: 1.2, color: C.blue, marginBottom: 6, fontWeight: 800 }}>CAMERA VIEWS</div>
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 4 }}>
             {availableCameraViews.map((v) => (
-              <button key={v} style={{ ...smallBtn(false), padding: "5px 8px", fontSize: 9.5 }} onClick={() => setView(v)}>
+              <button
+                key={v}
+                style={{ ...smallBtn(false), padding: "5px 6px", fontSize: 9, minWidth: 0, whiteSpace: "normal", lineHeight: 1.15 }}
+                onClick={() => setView(v)}
+              >
                 {v === "Full Chain" ? "Overview" : v}
               </button>
             ))}
