@@ -770,6 +770,7 @@ export default function SupplyChainSim() {
   const [showOut, setShowOut] = useState(true);
   const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
   const [panelOpen, setPanelOpen] = useState(true);
+  const [cameraFollowing, setCameraFollowing] = useState(true);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -798,6 +799,42 @@ export default function SupplyChainSim() {
       camera.lookAt(cam.target);
     };
     applyCam();
+
+    let autoFollow = true;
+    let autoViewKey = "Full Chain";
+    const cameraViews = {
+      "Full Chain": { target: [-3, 0.5, 8], theta: -0.85, phi: 1.0, radius: fitRadius() },
+      "Inbound Docks": { target: [-20, 1, 16], theta: -0.6, phi: 1.0, radius: 18 },
+      "Sorting": { target: [-8.5, 1.3, 15.5], theta: -0.95, phi: 1.0, radius: 15 },
+      "Storage & Picking": { target: [6.3, 1.3, 12], theta: -0.9, phi: 0.95, radius: 15 },
+      "Items to be packed": { target: [-10.5, 1.2, 2], theta: -0.9, phi: 1.0, radius: 15 },
+      "Packing Stations": { target: [-3.5, 1, 3.2], theta: -0.75, phi: 1.0, radius: 21 },
+      "Label Check": { target: [MACHINE_X, 1.5, 0], theta: -1.2, phi: 1.0, radius: 11 },
+      Shipping: { target: [CONV_END - 3, 1, 0], theta: -0.7, phi: 0.95, radius: 13 },
+    };
+    const focusForTime = (t) => {
+      if (t < 5) return "Inbound Docks";
+      if (t < 17) return "Sorting";
+      if (t < 31) return "Storage & Picking";
+      if (t < PACK_OFF + 2.5) return "Items to be packed";
+      if (t < PACK_OFF + 12) return "Packing Stations";
+      if (t < Math.max(PACK_OFF + 18, simRef.current.data.duration - 8)) return "Label Check";
+      return "Shipping";
+    };
+    const applyView = (name, smooth = false) => {
+      const v = cameraViews[name] || cameraViews["Full Chain"];
+      autoViewKey = name;
+      if (smooth) {
+        cam.target.lerp(new THREE.Vector3(...v.target), 0.055);
+        cam.theta += (v.theta - cam.theta) * 0.055;
+        cam.phi += (v.phi - cam.phi) * 0.055;
+        cam.radius += (v.radius - cam.radius) * 0.055;
+      } else {
+        cam.target.set(...v.target);
+        cam.theta = v.theta; cam.phi = v.phi; cam.radius = v.radius;
+      }
+      applyCam();
+    };
 
     scene.add(new THREE.AmbientLight(0x8899bb, 0.55));
     const key = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -908,6 +945,32 @@ export default function SupplyChainSim() {
       s.position.set(tx, 2.5, tz);
       propsIn.add(s);
     });
+
+    // compressed process-time visualization: real operational average without extending simulation runtime
+    const leadTimeSign = makeTextPlane("SORTING → PUT-AWAY  ·  AVG. 2.5 H", C.orange, 6.4, 0.62);
+    leadTimeSign.position.set(3.4, 4.1, 0.2);
+    propsIn.add(leadTimeSign);
+
+    const leadTimeLineMat = new THREE.LineBasicMaterial({ color: C.orange, transparent: true, opacity: 0.9 });
+    const leadTimeCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(SORT_X + 1.0, 2.0, 0.2),
+      new THREE.Vector3(1.5, 2.7, 0.2),
+      new THREE.Vector3(7.8, 2.7, 0.2),
+      new THREE.Vector3(10.6, 2.0, 0.2),
+    ]);
+    const leadTimeLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(leadTimeCurve.getPoints(48)),
+      leadTimeLineMat
+    );
+    propsIn.add(leadTimeLine);
+
+    const leadTimeArrow = new THREE.Mesh(
+      new THREE.ConeGeometry(0.22, 0.58, 8),
+      new THREE.MeshBasicMaterial({ color: C.orange })
+    );
+    leadTimeArrow.rotation.z = -Math.PI / 2;
+    leadTimeArrow.position.set(10.7, 2.0, 0.2);
+    propsIn.add(leadTimeArrow);
 
     // aKL conveyor
     const convGroupIn = new THREE.Group();
@@ -1743,7 +1806,13 @@ export default function SupplyChainSim() {
     // ---------- camera controls ----------
     const el = renderer.domElement;
     let dragging = false, panning = false, lx = 0, ly = 0, lastDist = 0;
-    const onDown = (e) => { dragging = true; panning = e.button === 2 || e.shiftKey; lx = e.clientX; ly = e.clientY; };
+    const stopAutoFollow = () => {
+      if (autoFollow) {
+        autoFollow = false;
+        setCameraFollowing(false);
+      }
+    };
+    const onDown = (e) => { stopAutoFollow(); dragging = true; panning = e.button === 2 || e.shiftKey; lx = e.clientX; ly = e.clientY; };
     const onMove = (e) => {
       if (!dragging) return;
       const dx = e.clientX - lx, dy = e.clientY - ly;
@@ -1762,10 +1831,12 @@ export default function SupplyChainSim() {
     const onUp = () => (dragging = false);
     const onWheel = (e) => {
       e.preventDefault();
+      stopAutoFollow();
       cam.radius = Math.min(130, Math.max(6, cam.radius * (1 + e.deltaY * 0.001)));
       applyCam();
     };
     const onTouchStart = (e) => {
+      stopAutoFollow();
       if (e.touches.length === 1) { dragging = true; panning = false; lx = e.touches[0].clientX; ly = e.touches[0].clientY; }
       else if (e.touches.length === 2) lastDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
     };
@@ -1879,8 +1950,16 @@ export default function SupplyChainSim() {
       const t = S.t;
       const clockMin = dI.clockStart + t * dI.rate;
 
+      if (autoFollow) {
+        const nextView = focusForTime(t);
+        applyView(nextView, true);
+      }
+
       // inbound side
       beltTexIn.offset.x -= dtReal * (S.playing ? S.speed : 0) * 1.4;
+      const leadPulse = 0.72 + 0.28 * Math.sin(now * 0.004);
+      leadTimeLineMat.opacity = t >= 10 && t <= 31 ? leadPulse : 0.28;
+      leadTimeArrow.scale.setScalar(t >= 10 && t <= 31 ? 1 + 0.12 * Math.sin(now * 0.006) : 0.9);
       drawClock(fmtClock(clockMin), false, false);
       const noteSoon = dI.stats.notes.some((nt) => Math.abs(t - nt) < 0.6);
       prPaper.visible = noteSoon;
@@ -2097,7 +2176,19 @@ export default function SupplyChainSim() {
     };
     window.addEventListener("resize", onResize);
 
-    world.current = { cam, applyCam, fitRadius };
+    world.current = {
+      cam, applyCam, fitRadius,
+      refocus: () => {
+        autoFollow = true;
+        setCameraFollowing(true);
+        applyView(focusForTime(simRef.current.t), false);
+      },
+      setManualView: (name) => {
+        autoFollow = false;
+        setCameraFollowing(false);
+        applyView(name, false);
+      },
+    };
 
     return () => {
       cancelAnimationFrame(raf);
@@ -2131,7 +2222,9 @@ export default function SupplyChainSim() {
     S.rebuilt = true;
     setPlaying(true);
     setHud((h) => ({ ...h, t: startTime, done: false, msg: message, msgKind: "info" }));
-    if (viewName) setTimeout(() => setView(viewName), 0);
+    if (viewName) setTimeout(() => {
+      world.current.refocus?.();
+    }, 0);
   };
   const startInbound = () => startAt(0, "Inbound started — trucks arrive at the receiving gates", "Full Chain");
   const startPacking = () => startAt(PACK_OFF, `Packing started at ITEMS TO BE PACKED — ${SCENARIOS[scenario].title}`, "Packing Stations");
@@ -2173,21 +2266,8 @@ export default function SupplyChainSim() {
   const setSpd = (v) => { simRef.current.speed = v; setSpeed(v); };
   const toggleIn = () => setShowIn((v) => { simRef.current.showIn = !v; return !v; });
   const toggleOut = () => setShowOut((v) => { simRef.current.showOut = !v; return !v; });
-  const setView = (name) => {
-    const { cam, applyCam, fitRadius } = world.current;
-    const views = {
-      "Full Chain": { target: [-3, 0.5, 8], theta: -0.85, phi: 1.0, radius: fitRadius ? fitRadius() : 58 },
-      "Inbound Docks": { target: [-20, 1, 16], theta: -0.6, phi: 1.0, radius: 18 },
-      "Storage & Picking": { target: [6.3, 1, 12], theta: -0.9, phi: 0.95, radius: 15 },
-      "Packing Stations": { target: [-3.5, 1, 3.2], theta: -0.75, phi: 1.0, radius: 21 },
-      "Label Check": { target: [MACHINE_X, 1.5, 0], theta: -1.2, phi: 1.0, radius: 11 },
-      Shipping: { target: [CONV_END - 3, 1, 0], theta: -0.7, phi: 0.95, radius: 13 },
-    };
-    const v = views[name];
-    cam.target.set(...v.target);
-    cam.theta = v.theta; cam.phi = v.phi; cam.radius = v.radius;
-    applyCam();
-  };
+  const setView = (name) => world.current.setManualView?.(name);
+  const refocusCamera = () => world.current.refocus?.();
 
   const data = simRef.current.data;
   const kind = hud.msgKind;
@@ -2318,12 +2398,22 @@ export default function SupplyChainSim() {
           </>
         ) : <button style={btn(false)} onClick={doPause}>❚❚ Pause</button>}
         <button style={btn(false)} onClick={doReset}>↺ Reset</button>
+        <button
+          style={{ ...btn(cameraFollowing), borderColor: cameraFollowing ? C.blue : C.line, color: cameraFollowing ? C.blue : C.text }}
+          onClick={refocusCamera}
+          title="Return the camera to the currently active process step"
+        >
+          ◎ Refocus{cameraFollowing ? " · Auto" : ""}
+        </button>
         <button style={btn(false)} onClick={doStep}>⇥ Step</button>
         <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
           {[0.5, 1, 2, 4].map((v) => (
             <button key={v} style={smallBtn(speed === v)} onClick={() => setSpd(v)}>{v}x</button>
           ))}
         </div>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: C.orange, whiteSpace: "nowrap" }}>
+          SORT → STORAGE: Ø 2.5 h (compressed)
+        </span>
         <div style={{ flex: 1, minWidth: 120, height: 6, background: C.panel2, borderRadius: 3, overflow: "hidden", margin: "0 6px" }}>
           <div style={{ width: `${(hud.t / data.duration) * 100}%`, height: "100%", background: C.blue, transition: "width 0.1s linear" }} />
         </div>
