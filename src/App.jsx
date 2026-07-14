@@ -623,9 +623,9 @@ function buildPackScenario(n) {
     messages.push([c4.labelT, "C-4 labelled 4/4 — order fully packed", "ok"]);
   }
 
-  // S2-S4: prepend Ortec-routed infeed — totes travel the supply line to the
-  // capacity-matched station before packing starts (everything else shifts by OFF)
-  if (n >= 2) {
+  // S1-S4: prepend ORTEC-routed infeed — picked items travel from ITEMS TO BE PACKED
+  // to the capacity-matched station before the selected packing scenario begins.
+  if (n >= 1) {
     const OFF = 5;
     parcels.forEach((p) => {
       ["spawn", "packEnd", "move", "labelT", "interimT", "finalT", "stageIn", "release", "tEnter", "tArr", "devT"].forEach((k) => {
@@ -1471,12 +1471,16 @@ export default function SupplyChainSim() {
 
 
 
-    // chain uses the Ortec packing flow (scenario 4 layout)
-    staging.visible = false;
-    loopGroup.visible = false;
-    machine.visible = true;
-    relabelGroup.visible = true;
-    ortecGroup.visible = true;
+    // Show the physical equipment required by the selected packing scenario.
+    // S1: direct labels with open package count (1/X, 2/X, 3/X)
+    // S2: packages wait on staging tables until the complete order is ready
+    // S3: interim labels, downstream labelling machine and waiting loop
+    // S4: predictive ORTEC labels, verification scan and correction spur
+    staging.visible = scenario === 2;
+    loopGroup.visible = scenario === 3;
+    machine.visible = scenario === 3 || scenario === 4;
+    relabelGroup.visible = scenario === 4;
+    ortecGroup.visible = scenario === 4;
     infeedGroup.visible = true;
 
     // ================= PICKING LINK =================
@@ -2125,7 +2129,7 @@ export default function SupplyChainSim() {
     simRef.current = { ...simRef.current, t: 0, playing: false, data: nextData };
     setPlaying(false);
     setScenario(nextScenario);
-    setHud({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, msg: `Scenario ${nextScenario} selected — press start`, msgKind: "info", done: false });
+    setHud({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, msg: `Scenario S${nextScenario} selected — press Start to run the changed packing flow`, msgKind: "info", done: false });
   };
   const setSpd = (v) => { simRef.current.speed = v; setSpeed(v); };
   const toggleIn = () => setShowIn((v) => { simRef.current.showIn = !v; return !v; });
