@@ -761,6 +761,205 @@ function buildChainData(packScenario = 4) {
   };
 }
 
+
+function ProcessGapVisualization({ onHome }) {
+  const mountRef = useRef(null);
+  const [running, setRunning] = useState(false);
+  const [step, setStep] = useState(0);
+  const [clock, setClock] = useState("13:35");
+  const animRef = useRef({ running: false, start: 0, raf: 0 });
+
+  const steps = [
+    { time: "13:35", title: "Customer order received", detail: "Required item has zero available stock.", tone: C.blue },
+    { time: "13:50", title: "Inbound item is being processed", detail: "The order cannot be released because the item is not yet in storage.", tone: C.yellow },
+    { time: "14:20", title: "Item reaches storage location", detail: "Put-away is completed after the critical 14:00 storage cutoff.", tone: C.orange },
+    { time: "14:20", title: "Delivery note created", detail: "The order is released only now, when the stock becomes available.", tone: C.orange },
+    { time: "14:21", title: "Insufficient time remaining", detail: "Pick, pack and loading require more time than remains before 18:00.", tone: C.red },
+    { time: "18:00", title: "Express departure missed", detail: "The order cannot be shipped as an Express Next Day Delivery today.", tone: C.red },
+  ];
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return undefined;
+    const w = Math.max(1, mount.clientWidth), h = Math.max(1, mount.clientHeight);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(w, h);
+    renderer.shadowMap.enabled = true;
+    mount.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(C.bg);
+    scene.fog = new THREE.Fog(C.bg, 35, 75);
+    const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 150);
+    const cam = { theta: -0.72, phi: 1.02, radius: 27, target: new THREE.Vector3(1, 1.2, 0) };
+    const applyCamera = () => {
+      const sp = Math.sin(cam.phi), cp = Math.cos(cam.phi);
+      camera.position.set(cam.target.x + cam.radius * sp * Math.sin(cam.theta), cam.target.y + cam.radius * cp, cam.target.z + cam.radius * sp * Math.cos(cam.theta));
+      camera.lookAt(cam.target);
+    };
+    applyCamera();
+
+    scene.add(new THREE.AmbientLight(0x93a5c2, 0.7));
+    const light = new THREE.DirectionalLight(0xffffff, 1.15);
+    light.position.set(10, 20, 12); light.castShadow = true; scene.add(light);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(70, 36), new THREE.MeshStandardMaterial({ color: 0x151d28, roughness: 0.95 }));
+    floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+    const grid = new THREE.GridHelper(70, 70, 0x293548, 0x202b39); grid.position.y = 0.01; scene.add(grid);
+
+    const addBox = (x,y,z,sx,sy,sz,color) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz), new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.06 }));
+      m.position.set(x,y,z); m.castShadow = true; m.receiveShadow = true; scene.add(m); return m;
+    };
+    const sprite = (main, sub, color, x, y, z, scale = 1) => {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeLabelTexture(main, sub, color), transparent: true, depthTest: false }));
+      s.position.set(x,y,z); s.scale.set(4.2 * scale, 2.1 * scale, 1); scene.add(s); return s;
+    };
+
+    // Only the assets required for this process-gap story.
+    addBox(-11, 0.06, 0, 9, 0.12, 8, 0x1b3146);
+    addBox(1, 0.06, 0, 11, 0.12, 8, 0x3a3219);
+    addBox(12, 0.06, 0, 8, 0.12, 8, 0x412025);
+    sprite("INBOUND ITEM", "zero stock for customer order", C.blue, -11, 4.7, -2.8, 0.86);
+    sprite("STORAGE LOCATION", "critical cutoff 14:00", C.orange, 1, 5.5, -2.8, 0.9);
+    sprite("OUTBOUND 18:00", "Express Next Day", C.red, 12, 4.7, -2.8, 0.86);
+
+    // Small inbound conveyor.
+    addBox(-8.5, 0.75, 0, 7, 0.28, 1.7, 0x273342);
+    for (let x = -11.5; x <= -5.5; x += 0.65) addBox(x, 0.92, 0, 0.12, 0.12, 1.45, 0x6c7785);
+
+    // One storage rack / one storage location.
+    for (const x of [-1.7, 3.7]) for (const z of [-2.4, 2.4]) addBox(x, 2.6, z, 0.18, 5.2, 0.18, 0x667383);
+    for (const y of [0.55, 1.65, 2.75, 3.85, 4.95]) addBox(1, y, 0, 5.6, 0.14, 5, 0x566273);
+    const slotGlow = addBox(1, 2.82, 0, 2.2, 0.16, 1.8, 0xff8c42);
+
+    // One order card, no other orders.
+    const orderPanel = addBox(9.5, 2.4, 3.5, 4.7, 4.2, 0.25, 0x1a2331);
+    sprite("CUSTOMER ORDER", "1 item · zero stock", C.blue, 9.5, 3.35, 3.32, 0.72);
+    const releaseLabel = sprite("ORDER BLOCKED", "waiting for stock", C.red, 9.5, 2.1, 3.30, 0.68);
+
+    // One tote moving into the rack.
+    const tote = addBox(-11.5, 1.15, 0, 1.2, 0.75, 0.95, 0x00c8ff);
+    const toteTag = sprite("REQUIRED ITEM", "for this order", C.blue, -11.5, 2.05, 0, 0.52);
+
+    // Delivery note sheet appears after put-away.
+    const note = addBox(6.3, 1.25, 0, 1.4, 0.08, 1.9, 0xf4f6f8);
+    note.rotation.z = -0.08; note.visible = false;
+    const noteLabel = sprite("DELIVERY NOTE", "created at 14:20", C.orange, 6.3, 2.25, 0, 0.56); noteLabel.visible = false;
+
+    // Blocked downstream path and missed truck.
+    addBox(8.8, 0.75, 0, 4.2, 0.28, 1.7, 0x273342);
+    addBox(12.2, 1.45, 0, 5.6, 2.9, 2.8, 0x5a6675);
+    addBox(15.7, 1.15, 0, 1.6, 2.3, 2.5, 0xb8c1ca);
+    const barrier = addBox(8.6, 1.45, 0, 0.25, 2.7, 2.3, 0xff5c5c);
+    barrier.visible = false;
+    const gapLabel = sprite("TIME GAP", "3h40 left · more time required", C.red, 8.6, 3.3, 0, 0.72); gapLabel.visible = false;
+
+    let dragging = false, px = 0, py = 0;
+    const down = (e) => { dragging = true; px = e.clientX; py = e.clientY; renderer.domElement.setPointerCapture?.(e.pointerId); };
+    const move = (e) => { if (!dragging) return; cam.theta -= (e.clientX-px)*0.006; cam.phi = THREE.MathUtils.clamp(cam.phi+(e.clientY-py)*0.004,0.3,1.35); px=e.clientX;py=e.clientY;applyCamera(); };
+    const up = () => { dragging = false; };
+    const wheel = (e) => { cam.radius = THREE.MathUtils.clamp(cam.radius + e.deltaY*0.018,16,42); applyCamera(); };
+    renderer.domElement.addEventListener("pointerdown", down); renderer.domElement.addEventListener("pointermove", move); renderer.domElement.addEventListener("pointerup", up); renderer.domElement.addEventListener("wheel", wheel, { passive:true });
+
+    const animate = (now) => {
+      animRef.current.raf = requestAnimationFrame(animate);
+      let p = 0;
+      if (animRef.current.running) p = Math.min(1, (now - animRef.current.start) / 12500);
+      else p = animRef.current.progress || 0;
+      animRef.current.progress = p;
+
+      let active = 0;
+      if (p < .16) active = 0;
+      else if (p < .38) active = 1;
+      else if (p < .57) active = 2;
+      else if (p < .68) active = 3;
+      else if (p < .84) active = 4;
+      else active = 5;
+      setStep((prev) => prev === active ? prev : active);
+      setClock((prev) => prev === steps[active].time ? prev : steps[active].time);
+
+      // item travels from inbound to the single storage slot
+      if (p < .55) {
+        const f = THREE.MathUtils.smoothstep(p, .08, .55);
+        tote.position.lerpVectors(new THREE.Vector3(-11.5,1.15,0), new THREE.Vector3(1,3.25,0), f);
+        toteTag.position.set(tote.position.x, tote.position.y + 0.9, tote.position.z);
+      } else {
+        tote.position.set(1,3.25,0); toteTag.position.set(1,4.15,0);
+      }
+      const released = p >= .57;
+      note.visible = released; noteLabel.visible = released;
+      releaseLabel.material.map = releaseLabel.material.map;
+      if (released && !releaseLabel.userData.updated) {
+        releaseLabel.material.map?.dispose();
+        releaseLabel.material.map = makeLabelTexture("DELIVERY NOTE CREATED", "14:20 · order released", C.orange);
+        releaseLabel.material.needsUpdate = true;
+        releaseLabel.userData.updated = true;
+      }
+      barrier.visible = p >= .69;
+      gapLabel.visible = p >= .69;
+      slotGlow.material.emissive = new THREE.Color(p >= .55 ? 0xff8c42 : 0x000000);
+      slotGlow.material.emissiveIntensity = p >= .55 ? 0.55 + Math.sin(now*0.008)*0.18 : 0;
+      if (p >= 1) animRef.current.running = false;
+      renderer.render(scene, camera);
+    };
+    animRef.current.raf = requestAnimationFrame(animate);
+
+    const resize = () => { const nw=Math.max(1,mount.clientWidth), nh=Math.max(1,mount.clientHeight); camera.aspect=nw/nh;camera.updateProjectionMatrix();renderer.setSize(nw,nh); };
+    window.addEventListener("resize", resize);
+    return () => {
+      cancelAnimationFrame(animRef.current.raf); window.removeEventListener("resize", resize);
+      renderer.domElement.removeEventListener("pointerdown", down); renderer.domElement.removeEventListener("pointermove", move); renderer.domElement.removeEventListener("pointerup", up); renderer.domElement.removeEventListener("wheel", wheel);
+      scene.traverse((o)=>{o.geometry?.dispose?.(); if(o.material){const ms=Array.isArray(o.material)?o.material:[o.material];ms.forEach(m=>{m.map?.dispose?.();m.dispose?.();});}});
+      renderer.dispose(); if(renderer.domElement.parentNode===mount) mount.removeChild(renderer.domElement);
+    };
+  }, []);
+
+  const start = () => { animRef.current.progress = 0; animRef.current.start = performance.now(); animRef.current.running = true; setRunning(true); setStep(0); setClock("13:35"); window.setTimeout(()=>setRunning(false),12600); };
+  const reset = () => { animRef.current.running = false; animRef.current.progress = 0; setRunning(false); setStep(0); setClock("13:35"); };
+
+  return (
+    <div style={{ position:"absolute", inset:0, background:C.bg, color:C.text, fontFamily:"'Inter',system-ui,sans-serif", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+      <div style={{ minHeight:68, padding:"10px 14px", borderBottom:`1px solid ${C.line}`, background:C.panel, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
+        <div><div style={{ color:C.orange, fontFamily:"'IBM Plex Mono',monospace", fontSize:10, fontWeight:800, letterSpacing:1.2 }}>PROCESS GAP VISUALIZATION</div><div style={{ fontSize:21, fontWeight:800, marginTop:3 }}>Late put-away blocks Express Next Day shipping</div></div>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <div style={{ background:C.panel2, border:`1px solid ${clock>="14:00"?C.orange:C.line}`, borderRadius:10, padding:"8px 12px", textAlign:"right" }}><div style={{ color:C.dim, fontSize:8, letterSpacing:1 }}>SIMULATION TIME</div><div style={{ fontFamily:"'IBM Plex Mono',monospace", fontWeight:800, fontSize:20, color:clock>="18:00"?C.red:clock>="14:00"?C.orange:C.text }}>{clock}</div></div>
+          <button onClick={onHome} style={{ border:`1px solid ${C.line}`, background:C.panel2, color:C.dim, borderRadius:9, padding:"10px 12px", cursor:"pointer" }}>⌂ Home</button>
+        </div>
+      </div>
+      <div style={{ flex:1, minHeight:0, position:"relative" }}>
+        <div ref={mountRef} style={{ position:"absolute", inset:0, touchAction:"none" }} />
+        <div style={{ position:"absolute", top:12, left:12, width:310, background:"rgba(20,27,37,.95)", border:`1px solid ${C.orange}`, borderRadius:12, padding:13 }}>
+          <div style={{ color:C.orange, fontFamily:"'IBM Plex Mono',monospace", fontSize:9, fontWeight:800, letterSpacing:1 }}>ONE ORDER · ONE MISSING ITEM</div>
+          <div style={{ fontSize:16, fontWeight:800, margin:"7px 0" }}>{steps[step].title}</div>
+          <div style={{ color:C.dim, lineHeight:1.5, fontSize:12.5 }}>{steps[step].detail}</div>
+          <div style={{ marginTop:11, paddingTop:9, borderTop:`1px solid ${C.line}`, color:C.text, fontSize:11.5, lineHeight:1.45 }}><b>Business rule:</b> storage availability by 14:00 is required to preserve sufficient time for picking, packing and loading before 18:00.</div>
+        </div>
+        <div style={{ position:"absolute", right:12, top:12, width:275, background:"rgba(20,27,37,.95)", border:`1px solid ${C.line}`, borderRadius:12, padding:12 }}>
+          <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:9, letterSpacing:1, color:C.dim, marginBottom:8 }}>PROCESS CONSEQUENCE</div>
+          <div style={{ display:"grid", gap:7, fontSize:11.5 }}>
+            <div style={{ display:"flex", justifyContent:"space-between" }}><span style={{color:C.dim}}>Storage cutoff</span><b style={{color:C.orange}}>14:00</b></div>
+            <div style={{ display:"flex", justifyContent:"space-between" }}><span style={{color:C.dim}}>Actual put-away</span><b style={{color:C.red}}>14:20</b></div>
+            <div style={{ display:"flex", justifyContent:"space-between" }}><span style={{color:C.dim}}>Shipping cutoff</span><b>18:00</b></div>
+            <div style={{ display:"flex", justifyContent:"space-between" }}><span style={{color:C.dim}}>Time remaining</span><b style={{color:C.orange}}>3h 40m</b></div>
+          </div>
+          <div style={{ marginTop:10, borderLeft:`3px solid ${C.red}`, padding:"8px 9px", background:"rgba(255,92,92,.08)", fontSize:11.5, lineHeight:1.45 }}><b style={{color:C.red}}>Customer impact:</b> Express Next Day commitment cannot be fulfilled.</div>
+        </div>
+        <div style={{ position:"absolute", left:12, bottom:12, display:"flex", gap:8 }}>
+          <button onClick={start} style={{ border:`1px solid ${C.green}`, background:"rgba(61,220,132,.12)", color:C.green, borderRadius:9, padding:"10px 14px", fontWeight:800, cursor:"pointer" }}>▶ {running?"Restart":"Start visualization"}</button>
+          <button onClick={reset} style={{ border:`1px solid ${C.line}`, background:C.panel2, color:C.dim, borderRadius:9, padding:"10px 12px", cursor:"pointer" }}>↺ Reset</button>
+        </div>
+        <div style={{ position:"absolute", right:12, bottom:12, color:C.dim, fontSize:10, background:"rgba(13,18,25,.82)", border:`1px solid ${C.line}`, borderRadius:8, padding:"7px 9px" }}>Drag to rotate · Scroll to zoom</div>
+      </div>
+      <div style={{ padding:"9px 14px", background:C.panel, borderTop:`1px solid ${C.line}` }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:5 }}>
+          {steps.map((s,i)=><div key={`${s.time}-${s.title}`} style={{ borderTop:`3px solid ${i<=step?s.tone:C.line}`, background:i===step?"rgba(255,255,255,.04)":"transparent", padding:"7px 6px 5px", minWidth:0 }}><div style={{ color:i<=step?s.tone:C.dim, fontFamily:"'IBM Plex Mono',monospace", fontSize:9, fontWeight:800 }}>{s.time}</div><div style={{ color:i===step?C.text:C.dim, fontSize:9.5, marginTop:3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.title}</div></div>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- main component ----------
 export default function SupplyChainSim() {
   const mountRef = useRef(null);
@@ -777,6 +976,7 @@ export default function SupplyChainSim() {
   const [scopeOpen, setScopeOpen] = useState(false);
   const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
   const [showLanding, setShowLanding] = useState(true);
+  const [experienceType, setExperienceType] = useState("packing");
 
   useEffect(() => {
     // The 3D mount is intentionally absent while the landing page is visible.
@@ -2424,6 +2624,7 @@ export default function SupplyChainSim() {
   const storageCutoffProgress = ((14 * 60 - dayStartMinutes) / (dayEndMinutes - dayStartMinutes)) * 100;
 
   const openExperience = (type) => {
+    setExperienceType(type === "gaps" ? "gap" : "packing");
     setShowLanding(false);
     if (type === "current") {
       changeScenario(1);
@@ -2433,8 +2634,7 @@ export default function SupplyChainSim() {
       changeScenario(2);
       showPackingOnly();
     } else {
-      changeScenario(4);
-      showFullChain();
+      return;
     }
   };
 
@@ -2467,9 +2667,9 @@ export default function SupplyChainSim() {
             </button>
             <button onClick={() => openExperience("gaps")} style={landingCard(C.orange)}>
               <div style={{ color: C.orange, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 800, letterSpacing: 1.2 }}>03 · PROCESS GAP VISUALIZATION</div>
-              <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>See the full chain</h2>
-              <p style={{ color: C.dim, lineHeight: 1.55, margin: 0 }}>Reveal inbound lead time, storage, picking, packing and the 18:00 OTS cutoff to discuss where process gaps create customer impact.</p>
-              <div style={{ marginTop: "auto", paddingTop: 18, color: C.orange, fontWeight: 800 }}>Open full chain →</div>
+              <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>Late put-away after 14:00</h2>
+              <p style={{ color: C.dim, lineHeight: 1.55, margin: 0 }}>Follow one zero-stock customer order whose required item reaches storage after 14:00, triggering the delivery note too late to pick, pack and load before 18:00.</p>
+              <div style={{ marginTop: "auto", paddingTop: 18, color: C.orange, fontWeight: 800 }}>Open process gap →</div>
             </button>
           </div>
           <div style={{ marginTop: 18, color: C.dim, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>You can switch scenarios, model scope and camera views at any time inside the 3D experience.</div>
@@ -2477,6 +2677,10 @@ export default function SupplyChainSim() {
         <style>{`@media (max-width: 820px) { .landing-grid { grid-template-columns: 1fr !important; } }`}</style>
       </div>
     );
+  }
+
+  if (experienceType === "gap") {
+    return <ProcessGapVisualization onHome={() => { setShowLanding(true); setExperienceType("packing"); }} />;
   }
 
   return (
