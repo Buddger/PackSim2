@@ -776,7 +776,6 @@ export default function SupplyChainSim() {
   const [showShipping, setShowShipping] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
-  const [panelOpen, setPanelOpen] = useState(true);
   const [showLanding, setShowLanding] = useState(true);
 
   useEffect(() => {
@@ -2368,30 +2367,6 @@ export default function SupplyChainSim() {
   });
   const smallBtn = (active) => ({ ...btn(active), padding: "5px 9px", fontSize: 11 });
 
-  const chronology = data.messages
-    .filter(([eventT]) => eventT <= hud.t + 0.01)
-    .slice(-10)
-    .map(([eventT, text, eventKind], index, visibleEvents) => ({
-      eventT,
-      text,
-      eventKind: eventKind || "info",
-      clock: fmtClock(data.clockStart + eventT * data.rate, hud.clock || "09:00"),
-      isLatest: index === visibleEvents.length - 1,
-    }));
-
-  if (chronology.length === 0) {
-    chronology.push({
-      eventT: 0,
-      text: hud.msg || "Choose a start mode",
-      eventKind: hud.msgKind || "info",
-      clock: hud.clock,
-      isLatest: true,
-    });
-  }
-
-  const logColor = (eventKind) =>
-    eventKind === "ok" ? C.green : eventKind === "warn" ? C.orange : eventKind === "err" ? C.red : C.blue;
-
   const scenarioDescriptions = {
     1: "CURRENT STATE: Labels are printed immediately. The final package count is still unknown, so labels show 1/X, 2/X or 3/X.",
     2: "Packages wait in staging until the complete order is packed. Final labels are then applied together.",
@@ -2431,6 +2406,12 @@ export default function SupplyChainSim() {
   };
 
   const objective = scenarioObjectives[scenario];
+  const availableCameraViews = [
+    "Full Chain",
+    ...(showIn ? ["Inbound Docks", "Sorting", "Storage & Picking"] : []),
+    ...(showOut ? ["Items to be packed", "Packing Stations", "Label Check"] : []),
+    ...(showShipping ? ["Shipping"] : []),
+  ];
   const parseClockMinutes = (clock) => {
     const match = String(clock || "09:00").match(/^(\d{1,2}):(\d{2})$/);
     if (!match) return 9 * 60;
@@ -2552,15 +2533,29 @@ export default function SupplyChainSim() {
                 {/* Right scenario panel */}
         <div className="desktop-side-panel" style={{ position: "absolute", top: 12, right: 12, width: 270, display: "flex", flexDirection: "column", gap: 9 }}>
           <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden" }}>
-            <div style={{ padding: "9px 11px", background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>PACKING SCENARIOS</div>
-            <div style={{ padding: 8, display: "grid", gap: 6 }}>
-              {[1, 2, 3, 4].map((n) => (
-                <button key={n} onClick={() => changeScenario(n)} style={{ ...smallBtn(scenario === n), width: "100%", textAlign: "left", padding: "8px 9px", display: "flex", justifyContent: "space-between", gap: 8 }}>
-                  <span>S{n}</span><span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{SCENARIOS[n].title}</span>
-                </button>
-              ))}
+            <div style={{ padding: "9px 11px", background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>PACKING PROCESS</div>
+
+            <div style={{ padding: 9, borderBottom: `1px solid ${C.line}` }}>
+              <div style={{ color: C.blue, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 800, letterSpacing: 1.1, marginBottom: 7 }}>CURRENT STATE</div>
+              <button onClick={() => changeScenario(1)} style={{ ...smallBtn(scenario === 1), width: "100%", textAlign: "left", padding: "9px 10px", display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 8, alignItems: "center" }}>
+                <span>S1</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>Label immediately</span>
+              </button>
+              <div style={{ marginTop: 7, fontSize: 10.5, color: C.dim, lineHeight: 1.45 }}>Today’s process: labels are created before the final Handling Unit count is known.</div>
             </div>
-            <div style={{ padding: "0 11px 11px", fontSize: 11, color: C.dim, lineHeight: 1.45 }}>{scenarioDescriptions[scenario]}</div>
+
+            <div style={{ padding: 9 }}>
+              <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 800, letterSpacing: 1.1, marginBottom: 7 }}>PACK SCENARIOS FOR A NEW LABEL PROCESS</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {[2, 3, 4].map((n) => (
+                  <button key={n} onClick={() => changeScenario(n)} style={{ ...smallBtn(scenario === n), width: "100%", textAlign: "left", padding: "9px 10px", display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 8, alignItems: "center" }}>
+                    <span>S{n}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{SCENARIOS[n].title}</span>
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: 8, fontSize: 10.5, color: C.dim, lineHeight: 1.45 }}>{scenario === 1 ? "Select S2–S4 to compare alternative future-state label processes." : scenarioDescriptions[scenario]}</div>
+            </div>
           </div>
 
           <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5 }}>
@@ -2621,7 +2616,7 @@ export default function SupplyChainSim() {
               <button style={smallBtn(showShipping)} onClick={toggleShipping}>{showShipping ? "◉" : "○"} Shipping</button>
             </div>}
             <div style={{ padding: "7px 9px", borderTop: `1px solid ${C.line}`, color: C.dim, lineHeight: 1.45 }}>
-              Default: packing process only. Camera views automatically reveal hidden areas.
+              Default: packing process only. Camera views are limited to the currently visible model scope.
             </div>
           </div>
         </div>
@@ -2630,7 +2625,7 @@ export default function SupplyChainSim() {
         <div style={{ position: "absolute", bottom: 54, left: 12, width: 178, background: "rgba(13,18,25,0.92)", border: `1px solid ${C.line}`, borderRadius: 10, padding: 9, boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: 1.2, color: C.dim, marginBottom: 7 }}>CAMERA VIEWS</div>
           <div style={{ display: "grid", gap: 4 }}>
-            {["Packing Stations", "Items to be packed", "Label Check", "Full Chain", "Inbound Docks", "Storage & Picking", "Shipping"].map((v) => (
+            {availableCameraViews.map((v) => (
               <button key={v} style={{ ...smallBtn(false), textAlign: "left", width: "100%", background: "rgba(26,35,49,0.9)" }} onClick={() => setView(v)}>
                 ○ {v === "Full Chain" ? "Overview" : v}
               </button>
