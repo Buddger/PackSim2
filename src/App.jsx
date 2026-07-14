@@ -780,8 +780,18 @@ export default function SupplyChainSim() {
   const [showLanding, setShowLanding] = useState(true);
 
   useEffect(() => {
+    // The 3D mount is intentionally absent while the landing page is visible.
+    // Initialize Three.js only after an experience has been opened.
+    if (showLanding) {
+      world.current = {};
+      return undefined;
+    }
+
     const mount = mountRef.current;
-    const W = mount.clientWidth, H = mount.clientHeight;
+    if (!mount) return undefined;
+
+    const W = Math.max(1, mount.clientWidth);
+    const H = Math.max(1, mount.clientHeight);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(W, H);
@@ -2242,9 +2252,12 @@ export default function SupplyChainSim() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       renderer.dispose();
-      mount.removeChild(renderer.domElement);
+      if (renderer.domElement.parentNode === mount) {
+        mount.removeChild(renderer.domElement);
+      }
+      world.current = {};
     };
-  }, [scenario]);
+  }, [scenario, showLanding]);
 
   // spacebar toggles play/pause
   useEffect(() => {
