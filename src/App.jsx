@@ -768,7 +768,7 @@ export default function SupplyChainSim() {
   const [speed, setSpeed] = useState(1);
   const [showIn, setShowIn] = useState(true);
   const [showOut, setShowOut] = useState(true);
-  const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
+  const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
   const [panelOpen, setPanelOpen] = useState(true);
 
   useEffect(() => {
@@ -1186,6 +1186,44 @@ export default function SupplyChainSim() {
     exitSign.position.set(CONV_END + 0.2, 2.7, 0);
     exitSign.rotation.y = -Math.PI / 2;
     propsOut.add(exitSign);
+
+
+    // Shipping dock with fixed 18:00 departure and OTS KPI
+    zone(CONV_END + 3.8, 0, 7.4, 7.2, 0xff8c42, 0.11, propsOut);
+
+    const shippingDockFrame = new THREE.Mesh(
+      new THREE.BoxGeometry(0.38, 3.5, 3.7),
+      mat(0x26313f, 0.55, 0.22)
+    );
+    shippingDockFrame.position.set(CONV_END + 1.15, 1.75, 0);
+    propsOut.add(shippingDockFrame);
+
+    const cutoffSign = makeTextPlane("TRUCK MUST BE LOADED BY 18:00", C.orange, 5.8, 0.72);
+    cutoffSign.position.set(CONV_END + 1.2, 4.15, 0);
+    cutoffSign.rotation.y = -Math.PI / 2;
+    propsOut.add(cutoffSign);
+
+    const otsSign = makeTextPlane("OTS · ON-TIME SHIPPING", C.green, 4.4, 0.62);
+    otsSign.position.set(CONV_END + 1.2, 3.35, 0);
+    otsSign.rotation.y = -Math.PI / 2;
+    propsOut.add(otsSign);
+
+    const departureClock = makeTextPlane("DEPARTURE 18:00", C.yellow, 3.4, 0.58);
+    departureClock.position.set(CONV_END + 3.4, 3.3, -2.4);
+    propsOut.add(departureClock);
+
+    // The trailer rear is positioned at the dock; the cab points away from the warehouse.
+    const shippingTruck = buildTruck(C.orange);
+    shippingTruck.position.set(CONV_END + 4.25, 0, 0);
+    shippingTruck.rotation.y = 0;
+    propsOut.add(shippingTruck);
+
+    const loadingBay = new THREE.Mesh(
+      new THREE.BoxGeometry(2.4, 0.12, 2.6),
+      new THREE.MeshBasicMaterial({ color: C.orange, transparent: true, opacity: 0.35 })
+    );
+    loadingBay.position.set(CONV_END + 1.65, 0.08, 0);
+    propsOut.add(loadingBay);
 
     // ORTEC-routed infeed conveyors for scenarios 2-4
     const infeedGroup = new THREE.Group();
@@ -2117,6 +2155,14 @@ export default function SupplyChainSim() {
 
       arrowsOut.forEach((a, i) => { a.material.opacity = 1; a.position.y = 0.95 + 0.05 * Math.sin(now * 0.006 + i); });
 
+      // Visual 18:00 departure: once all seven packages are loaded, the truck leaves the dock.
+      const shippedNow = dP.parcels.filter((p) => !p.tote && t >= p.conveyor[1]).length;
+      const departureStart = Math.max(0, data.duration - 1.8);
+      const departureProgress = THREE.MathUtils.clamp((t - departureStart) / 2.8, 0, 1);
+      shippingTruck.position.x = CONV_END + 4.25 + departureProgress * 12;
+      shippingTruck.visible = departureProgress < 0.98;
+      loadingBay.material.opacity = shippedNow >= 7 ? 0.52 : 0.22 + 0.12 * Math.sin(now * 0.004);
+
       // HUD throttle
       hudTimer += dtReal;
       if (hudTimer > 0.12) {
@@ -2124,7 +2170,8 @@ export default function SupplyChainSim() {
         const cnt = (arr) => arr.filter((x) => x !== null && t >= x).length;
         let msg = "Press start to run the full supply chain", kindM = "info";
         for (const m of data.messages) if (t >= m[0]) { msg = m[1]; kindM = m[2] || "info"; }
-        const shipped = dP.parcels.filter((p) => !p.tote && t >= p.conveyor[1]).length;
+        const shipped = shippedNow;
+        const ots = shipped >= 7 ? (departureProgress > 0 ? "Departed on time · 18:00" : "Loaded before 18:00") : "Loading for 18:00 cutoff";
         setHud({
           t,
           clock: fmtClock(clockMin),
@@ -2132,7 +2179,7 @@ export default function SupplyChainSim() {
           unloaded: cnt(dI.stats.unloaded),
           stored: cnt(dI.stats.stored),
           picked: cnt(data.pickTimes),
-          packed, labelled, inFix: inLoop, shipped,
+          packed, labelled, inFix: inLoop, shipped, ots,
           msg, msgKind: kindM,
           done: t >= data.duration,
         });
@@ -2225,7 +2272,7 @@ export default function SupplyChainSim() {
     simRef.current = { ...simRef.current, t: 0, playing: false, data: nextData };
     setPlaying(false);
     setScenario(nextScenario);
-    setHud({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, msg: `S${nextScenario}: ${SCENARIOS[nextScenario].title} selected — choose a start mode`, msgKind: "info", done: false });
+    setHud({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: `S${nextScenario}: ${SCENARIOS[nextScenario].title} selected — choose a start mode`, msgKind: "info", done: false });
   };
   const setSpd = (v) => { simRef.current.speed = v; setSpeed(v); };
   const toggleIn = () => setShowIn((v) => { simRef.current.showIn = !v; return !v; });
@@ -2324,6 +2371,7 @@ export default function SupplyChainSim() {
             <div><span style={{ color: C.text }}>Current step:</span> {processSteps[activeProcessIndex]}</div>
             <div><span style={{ color: C.text }}>Warehouse time:</span> {hud.clock}</div>
             <div><span style={{ color: C.orange }}>Sort → put-away:</span> Ø 2.5 h compressed</div>
+            <div><span style={{ color: C.yellow }}>Shipping cutoff:</span> Truck departure 18:00</div>
           </div>
         </div>
 
@@ -2360,6 +2408,7 @@ export default function SupplyChainSim() {
               {stat("Final labels", `${hud.labelled} / 7`, hud.labelled === 7 ? C.green : C.text)}
               {stat("In correction", hud.inFix, hud.inFix ? C.red : C.dim)}
               {stat("Shipped", `${hud.shipped} / 7`, hud.shipped ? C.green : C.dim)}
+              {stat("OTS · On-Time Shipping", hud.ots, hud.shipped === 7 ? C.green : C.yellow)}
             </div>}
           </div>
 
