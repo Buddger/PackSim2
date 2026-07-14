@@ -2259,90 +2259,150 @@ export default function SupplyChainSim() {
     </div>
   );
 
+  const processSteps = ["Inbound", "Sorting", "Put-away", "Picking", "Packing", "Labeling", "Shipping"];
+  const messageUpper = String(hud.msg || "").toUpperCase();
+  let activeProcessIndex = 0;
+  if (hud.shipped > 0 || messageUpper.includes("SHIP")) activeProcessIndex = 6;
+  else if (hud.labelled > 0 || hud.inFix > 0 || messageUpper.includes("LABEL") || messageUpper.includes("SCANNER") || messageUpper.includes("CORRECTION")) activeProcessIndex = 5;
+  else if (hud.packed > 0 || messageUpper.includes("PACK")) activeProcessIndex = 4;
+  else if (hud.picked > 0 || messageUpper.includes("PICK")) activeProcessIndex = 3;
+  else if (hud.stored > 0 || messageUpper.includes("PUT-AWAY") || messageUpper.includes("STORAGE")) activeProcessIndex = 2;
+  else if (hud.unloaded > 0 || messageUpper.includes("SORT")) activeProcessIndex = 1;
+
+  const processProgress = Math.max(0, Math.min(100, (hud.t / data.duration) * 100));
+  const scenarioDescriptions = {
+    1: "Labels are printed immediately. The final package count is still unknown, so labels show 1/X, 2/X or 3/X.",
+    2: "Packages wait in staging until the complete order is packed. Final labels are then applied together.",
+    3: "Packages receive interim labels and move directly to the conveyor. Final labels are applied later, including a scanner loop when required.",
+    4: "Labels are created from the ORTEC packing proposal. Verification failures enter the correction loop and pass the scanner again.",
+  };
+
   return (
     <div style={{ position: "absolute", inset: 0, background: C.bg, color: C.text, fontFamily: "'Space Grotesk', system-ui, sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
-        * { box-sizing: border-box; } button:active { transform: translateY(1px); }`}</style>
+        * { box-sizing: border-box; }
+        button:active { transform: translateY(1px); }
+        button:hover { filter: brightness(1.08); }
+        @media (max-width: 900px) {
+          .desktop-side-panel { width: 220px !important; }
+          .header-subtitle { display: none; }
+        }
+      `}</style>
 
-      {/* Header */}
-      <div style={{ padding: "10px 14px 8px", borderBottom: `1px solid ${C.line}`, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-        <div style={{ marginRight: "auto" }}>
-          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.3 }}>Full Supply Chain — Inbound to Shipping</div>
-          <div style={{ fontSize: 11, color: C.dim, fontFamily: "'IBM Plex Mono', monospace" }}>Truck → storage → pick → Ortec routing → pack → label → ship</div>
+      {/* Clean header */}
+      <div style={{ minHeight: 66, padding: "10px 14px", borderBottom: `1px solid ${C.line}`, display: "flex", gap: 12, alignItems: "center", background: C.panel }}>
+        <div style={{ marginRight: "auto", minWidth: 0 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: 0.2 }}>Supply Chain Digital Twin</div>
+          <div className="header-subtitle" style={{ fontSize: 11, color: C.dim, fontFamily: "'IBM Plex Mono', monospace", marginTop: 2 }}>
+            Inbound → Storage → Picking → Packing → Shipping
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontSize: 10, color: C.dim, fontFamily: "'IBM Plex Mono', monospace", marginRight: 2 }}>PACKING SCENARIO</span>
-          {[1, 2, 3, 4].map((n) => (
-            <button key={n} title={SCENARIOS[n].title} style={smallBtn(scenario === n)} onClick={() => changeScenario(n)}>S{n} · {SCENARIOS[n].short}</button>
-          ))}
+
+        <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div style={{ padding: "6px 9px", border: `1px solid ${C.line}`, borderRadius: 8, background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 }}>
+            <span style={{ color: C.dim }}>SCENARIO </span>
+            <span style={{ color: C.blue, fontWeight: 700 }}>S{scenario}</span>
+            <span style={{ color: C.text }}> · {SCENARIOS[scenario].short}</span>
+          </div>
+          <button style={btn(true)} onClick={startInbound}>▶ Start in Inbound</button>
+          <button style={{ ...btn(false), borderColor: C.green, color: C.green }} onClick={startPacking}>▶ Start with Packing</button>
         </div>
-        <button style={btn(showIn)} onClick={toggleIn}>{showIn ? "◉" : "○"} Inbound</button>
-        <button style={btn(showOut)} onClick={toggleOut}>{showOut ? "◉" : "○"} Outbound</button>
       </div>
 
       {/* 3D viewport */}
       <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
         <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
 
-        <div style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", maxWidth: "92%", background: "rgba(13,18,25,0.9)", border: `1px solid ${msgColor}`, borderRadius: 10, padding: "8px 14px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: msgColor, textAlign: "center" }}>
-          {dotColor && (
-            <span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: dotColor, marginRight: 7, verticalAlign: "middle" }} />
-          )}
+        {/* Current process card */}
+        <div style={{ position: "absolute", top: 12, left: 12, width: 230, background: "rgba(13,18,25,0.92)", border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, fontFamily: "'IBM Plex Mono', monospace", boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
+          <div style={{ fontSize: 9, letterSpacing: 1.2, color: C.dim, marginBottom: 7 }}>CURRENT PROCESS</div>
+          <div style={{ fontSize: 14, color: C.green, fontWeight: 700, marginBottom: 8 }}>{processSteps[activeProcessIndex]}</div>
+          <div style={{ height: 5, borderRadius: 3, background: C.panel2, overflow: "hidden", marginBottom: 8 }}>
+            <div style={{ width: `${processProgress}%`, height: "100%", background: C.green, transition: "width 0.15s linear" }} />
+          </div>
+          <div style={{ fontSize: 10, color: C.dim, lineHeight: 1.45 }}>
+            <div><span style={{ color: C.text }}>Current step:</span> {processSteps[activeProcessIndex]}</div>
+            <div><span style={{ color: C.text }}>Warehouse time:</span> {hud.clock}</div>
+            <div><span style={{ color: C.orange }}>Sort → put-away:</span> Ø 2.5 h compressed</div>
+          </div>
+        </div>
+
+        {/* Event message */}
+        <div style={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", maxWidth: "48%", background: "rgba(13,18,25,0.9)", border: `1px solid ${msgColor}`, borderRadius: 10, padding: "7px 12px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: msgColor, textAlign: "center" }}>
+          {dotColor && <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: dotColor, marginRight: 7 }} />}
           {hud.msg}
         </div>
 
-        <div style={{ position: "absolute", bottom: 14, right: 12, display: "flex", gap: 8, zIndex: 5 }}>
-          <button
-            onClick={playing ? doPause : startPacking}
-            style={{ width: 56, height: 56, borderRadius: "50%", border: `2px solid ${playing ? C.orange : C.green}`, background: "rgba(20,27,37,0.95)", color: playing ? C.orange : C.green, fontSize: 20, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.5)" }}
-            aria-label={playing ? "Pause" : "Start with Packing"}
-          >
-            {playing ? "❚❚" : "▶"}
-          </button>
-          <button
-            onClick={doReset}
-            style={{ width: 44, height: 44, alignSelf: "flex-end", borderRadius: "50%", border: `2px solid ${C.line}`, background: "rgba(20,27,37,0.95)", color: C.dim, fontSize: 16, cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.5)" }}
-            aria-label="Reset"
-          >
-            ↺
-          </button>
-        </div>
-
-        <div style={{ position: "absolute", bottom: 10, left: 10, display: "flex", flexDirection: "column", gap: 5 }}>
-          {["Full Chain", "Inbound Docks", "Storage & Picking", "Packing Stations", "Label Check", "Shipping"].map((v) => (
-            <button key={v} style={smallBtn(false)} onClick={() => setView(v)}>{v}</button>
-          ))}
-        </div>
-
-        <div style={{ position: "absolute", top: 56, right: 10, width: 240, background: "rgba(20,27,37,0.94)", border: `1px solid ${C.line}`, borderRadius: 10, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, overflow: "hidden" }}>
-          <div onClick={() => setPanelOpen((o) => !o)} style={{ padding: "7px 10px", background: C.panel2, cursor: "pointer", display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
-            <span>SUPPLY CHAIN STATUS</span><span>{panelOpen ? "−" : "+"}</span>
+        {/* Right scenario panel */}
+        <div className="desktop-side-panel" style={{ position: "absolute", top: 12, right: 12, width: 270, display: "flex", flexDirection: "column", gap: 9 }}>
+          <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden" }}>
+            <div style={{ padding: "9px 11px", background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>PACKING SCENARIOS</div>
+            <div style={{ padding: 8, display: "grid", gap: 6 }}>
+              {[1, 2, 3, 4].map((n) => (
+                <button key={n} onClick={() => changeScenario(n)} style={{ ...smallBtn(scenario === n), width: "100%", textAlign: "left", padding: "8px 9px", display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <span>S{n}</span><span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{SCENARIOS[n].title}</span>
+                </button>
+              ))}
+            </div>
+            <div style={{ padding: "0 11px 11px", fontSize: 11, color: C.dim, lineHeight: 1.45 }}>{scenarioDescriptions[scenario]}</div>
           </div>
-          {panelOpen && (
-            <div style={{ padding: "6px 10px 10px" }}>
-              {stat("Packing scenario", `S${scenario} · ${SCENARIOS[scenario].title}`, C.blue)}
-              {stat("Warehouse time", hud.clock)}
+
+          <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5 }}>
+            <div onClick={() => setPanelOpen((o) => !o)} style={{ padding: "8px 10px", background: C.panel2, cursor: "pointer", display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
+              <span>LIVE STATUS</span><span>{panelOpen ? "−" : "+"}</span>
+            </div>
+            {panelOpen && <div style={{ padding: "6px 10px 10px" }}>
               {stat("Trucks docked", `${hud.docked} / 2`, hud.docked === 2 ? C.green : C.text)}
               {stat("Boxes unloaded", `${hud.unloaded} / 4`)}
-              {stat("Units in storage", `${hud.stored} / 4`)}
+              {stat("Units stored", `${hud.stored} / 4`)}
               {stat("Orders picked", `${hud.picked} / 3`, hud.picked === 3 ? C.green : C.dim)}
               {stat("Packages packed", `${hud.packed} / 7`)}
-              {stat("Correct final labels", `${hud.labelled} / 7`, hud.labelled === 7 ? C.green : C.text)}
-              {stat("In label correction", hud.inFix, hud.inFix ? C.red : C.dim)}
+              {stat("Final labels", `${hud.labelled} / 7`, hud.labelled === 7 ? C.green : C.text)}
+              {stat("In correction", hud.inFix, hud.inFix ? C.red : C.dim)}
               {stat("Shipped", `${hud.shipped} / 7`, hud.shipped ? C.green : C.dim)}
+            </div>}
+          </div>
+
+          <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, padding: 10, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 }}>
+            <div style={{ fontWeight: 700, letterSpacing: 1, marginBottom: 7 }}>LEGEND</div>
+            {[
+              [C.blue, "Inbound"],
+              [C.yellow, "Storage & Picking"],
+              [C.green, "Packing"],
+              [C.orange, "Shipping"],
+              ["#f3f5f7", "ORTEC Routing"],
+            ].map(([color, label]) => <div key={label} style={{ display: "flex", gap: 8, alignItems: "center", padding: "3px 0", color: C.dim }}><span style={{ width: 9, height: 9, borderRadius: 2, background: color }} />{label}</div>)}
+            <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
+              <button style={{ ...smallBtn(showIn), flex: 1 }} onClick={toggleIn}>{showIn ? "◉" : "○"} Inbound</button>
+              <button style={{ ...smallBtn(showOut), flex: 1 }} onClick={toggleOut}>{showOut ? "◉" : "○"} Outbound</button>
             </div>
-          )}
+          </div>
+        </div>
+
+        {/* Camera views */}
+        <div style={{ position: "absolute", bottom: 54, left: 12, width: 178, background: "rgba(13,18,25,0.92)", border: `1px solid ${C.line}`, borderRadius: 10, padding: 9, boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: 1.2, color: C.dim, marginBottom: 7 }}>CAMERA VIEWS</div>
+          <div style={{ display: "grid", gap: 4 }}>
+            {["Full Chain", "Inbound Docks", "Storage & Picking", "Packing Stations", "Label Check", "Shipping"].map((v) => (
+              <button key={v} style={{ ...smallBtn(false), textAlign: "left", width: "100%", background: "rgba(26,35,49,0.9)" }} onClick={() => setView(v)}>
+                ○ {v === "Full Chain" ? "Overview" : v}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Floating playback */}
+        <div style={{ position: "absolute", bottom: 58, right: 300, display: "flex", gap: 8, zIndex: 5 }}>
+          <button onClick={playing ? doPause : startPacking} style={{ width: 50, height: 50, borderRadius: "50%", border: `2px solid ${playing ? C.orange : C.green}`, background: "rgba(20,27,37,0.95)", color: playing ? C.orange : C.green, fontSize: 18, cursor: "pointer" }} aria-label={playing ? "Pause" : "Start with Packing"}>{playing ? "❚❚" : "▶"}</button>
+          <button onClick={doReset} style={{ width: 40, height: 40, alignSelf: "flex-end", borderRadius: "50%", border: `2px solid ${C.line}`, background: "rgba(20,27,37,0.95)", color: C.dim, fontSize: 15, cursor: "pointer" }} aria-label="Reset">↺</button>
         </div>
 
         {hud.done && (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(13,18,25,0.6)", padding: 16 }}>
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(13,18,25,0.65)", padding: 16 }}>
             <div style={{ maxWidth: 460, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: 20 }}>
-              <div style={{ fontSize: 11, color: C.dim, fontFamily: "'IBM Plex Mono', monospace", marginBottom: 4 }}>SUPPLY CHAIN COMPLETE</div>
+              <div style={{ fontSize: 10, color: C.dim, fontFamily: "'IBM Plex Mono', monospace", marginBottom: 4 }}>SUPPLY CHAIN COMPLETE</div>
               <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 10 }}>End-to-end flow finished</div>
-              <div style={{ fontSize: 13.5, lineHeight: 1.5, color: C.text, marginBottom: 14, borderLeft: `3px solid ${C.green}`, paddingLeft: 10 }}>{data.keyMessage}</div>
-              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: C.dim, marginBottom: 16 }}>
-                Stored {hud.stored}/4 · picked {hud.picked}/3 · packed {hud.packed}/7 · shipped {hud.shipped}/7 · {hud.clock}
-              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 14, borderLeft: `3px solid ${C.green}`, paddingLeft: 10 }}>{data.keyMessage}</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button style={btn(true)} onClick={startInbound}>Replay from Inbound</button>
                 <button style={btn(false)} onClick={startPacking}>Replay from Packing</button>
@@ -2352,30 +2412,33 @@ export default function SupplyChainSim() {
         )}
       </div>
 
-      {/* Playback bar */}
-      <div style={{ padding: "8px 12px", paddingBottom: "calc(8px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", background: C.panel }}>
-        {!playing ? (
-          <>
-            <button style={btn(true)} onClick={startInbound}>▶ Start in Inbound</button>
-            <button style={{ ...btn(false), borderColor: C.green, color: C.green }} onClick={startPacking}>▶ Start with Packing</button>
-          </>
-        ) : <button style={btn(false)} onClick={doPause}>❚❚ Pause</button>}
-        <button style={btn(false)} onClick={doReset}>↺ Reset</button>
-        <button style={btn(false)} onClick={doStep}>⇥ Step</button>
-        <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
-          {[0.5, 1, 2, 4].map((v) => (
-            <button key={v} style={smallBtn(speed === v)} onClick={() => setSpd(v)}>{v}x</button>
-          ))}
+      {/* Process control strip */}
+      <div style={{ padding: "7px 12px calc(7px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, background: C.panel, display: "flex", gap: 10, alignItems: "center", minHeight: 52 }}>
+        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+          {playing ? <button style={btn(false)} onClick={doPause}>❚❚ Pause</button> : <button style={btn(false)} onClick={doPlay}>▶ Continue</button>}
+          <button style={smallBtn(false)} onClick={doReset}>↺ Reset</button>
+          <button style={smallBtn(false)} onClick={doStep}>⇥ Step</button>
         </div>
-        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: C.orange, whiteSpace: "nowrap" }}>
-          SORT → STORAGE: Ø 2.5 h (compressed)
-        </span>
-        <div style={{ flex: 1, minWidth: 120, height: 6, background: C.panel2, borderRadius: 3, overflow: "hidden", margin: "0 6px" }}>
-          <div style={{ width: `${(hud.t / data.duration) * 100}%`, height: "100%", background: C.blue, transition: "width 0.1s linear" }} />
+        <div style={{ display: "flex", gap: 3 }}>
+          {[0.5, 1, 2, 4].map((v) => <button key={v} style={smallBtn(speed === v)} onClick={() => setSpd(v)}>{v}x</button>)}
         </div>
-        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: C.dim }}>
-          {hud.clock}
-        </span>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 0, minWidth: 280 }}>
+          {processSteps.map((step, index) => {
+            const active = index === activeProcessIndex;
+            const completed = index < activeProcessIndex;
+            return <React.Fragment key={step}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 64 }}>
+                <div style={{ width: active ? 12 : 9, height: active ? 12 : 9, borderRadius: "50%", background: active ? C.green : completed ? C.blue : C.line, boxShadow: active ? `0 0 12px ${C.green}` : "none" }} />
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, color: active ? C.green : completed ? C.text : C.dim, marginTop: 3, whiteSpace: "nowrap" }}>{step}</span>
+              </div>
+              {index < processSteps.length - 1 && <div style={{ flex: 1, height: 2, background: index < activeProcessIndex ? C.blue : C.line, minWidth: 12 }} />}
+            </React.Fragment>;
+          })}
+        </div>
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: C.dim, textAlign: "right", whiteSpace: "nowrap" }}>
+          <div style={{ color: C.orange }}>SORT → STORAGE · Ø 2.5 h</div>
+          <div>{hud.clock}</div>
+        </div>
       </div>
     </div>
   );
