@@ -42,6 +42,13 @@ const ORDERS = [
   { key: "B", count: 2, color: "#ffd166", station: 1 },
   { key: "C", count: 3, color: "#e44cff", station: 2 },
 ];
+
+const SCENARIOS = {
+  1: { title: "Label immediately", short: "Immediate label" },
+  2: { title: "Wait, then label", short: "Wait, then label" },
+  3: { title: "Temporary label, final label later", short: "Interim + final" },
+  4: { title: "Label based on ORTEC proposal", short: "ORTEC proposal" },
+};
 const entryX = (st) => STATIONS[st].x + 1.5; // where the chute meets the conveyor
 
 function ride(t0, xFrom, xTo, speed = 2.5) {
@@ -544,17 +551,25 @@ function buildPackScenario(n) {
     const DEV_T = 8.0; // deviation detected while packing C-3
     const relabelDetour = (tArr) => {
       const tScan = tArr + 1.0;
+      const relabelT = tScan + 3.6;
+      const secondScanT = tScan + 11.2;
       return {
         pts: [
+          // failed verification scan: divert from the main line
           [tScan, MACHINE_X, CONV_Y, 0],
           [tScan + 1.4, MACHINE_X, CONV_Y, 3.4],
           [tScan + 2.6, MACHINE_X + 3, CONV_Y, 3.4],
           [tScan + 4.8, MACHINE_X + 3, CONV_Y, 3.4],
-          [tScan + 6.2, MACHINE_X + 6, CONV_Y, 3.4],
-          [tScan + 7.6, MACHINE_X + 6, CONV_Y, 0],
+          // after clarification, use a return loop instead of bypassing the scanner
+          [tScan + 6.0, MACHINE_X + 6, CONV_Y, 3.4],
+          [tScan + 7.0, MACHINE_X + 6, CONV_Y, 5.0],
+          [tScan + 9.0, MACHINE_X - 2, CONV_Y, 5.0],
+          [tScan + 10.0, MACHINE_X - 2, CONV_Y, 0],
+          [secondScanT, MACHINE_X, CONV_Y, 0],
         ],
-        relabelT: tScan + 3.6,
-        rejoinT: tScan + 7.6,
+        relabelT,
+        secondScanT,
+        rejoinT: secondScanT,
       };
     };
     const mk = (d) => ({ ...d, tEnter: d.move + 1.5, tArr: ride(d.move + 1.5, entryX(d.st), MACHINE_X) });
@@ -585,12 +600,14 @@ function buildPackScenario(n) {
     const c2 = mk(base(2, 2, { size: SZ.C2, spawn: 3.2, packEnd: 6.2, labelT: 6.4, move: 6.8, plan: 3 }));
     [c1, c2].forEach((d, i) => {
       const det = relabelDetour(d.tArr);
-      const tExit = ride(det.rejoinT + 0.2, MACHINE_X + 6, CONV_END);
+      const tExit = ride(det.secondScanT + 0.4, MACHINE_X, CONV_END);
       parcels.push({
         ...d,
         path: [
           ...packPath(d.st, d.spawn, d.move), ...toConv(d.st, d.move, d.tEnter).slice(1),
-          [d.tArr, MACHINE_X, CONV_Y, 0], ...det.pts, [tExit, CONV_END, CONV_Y, 0],
+          [d.tArr, MACHINE_X, CONV_Y, 0], ...det.pts,
+          [det.secondScanT + 0.4, MACHINE_X, CONV_Y, 0],
+          [tExit, CONV_END, CONV_Y, 0],
         ],
         labels: [
           [d.labelT, `${i + 1}/3`, C.green, "Ortec proposal"],
@@ -602,7 +619,8 @@ function buildPackScenario(n) {
         relabelIv: [det.pts[0][0], det.rejoinT],
       });
       messages.push([d.tArr, `Verify scan C-${i + 1}: label ${i + 1}/3 ≠ actual count 4 → label correction`, "err"]);
-      messages.push([det.relabelT, `C-${i + 1} relabelled ${i + 1}/4 — returning to main line`, "ok"]);
+      messages.push([det.relabelT, `C-${i + 1} relabelled ${i + 1}/4 — returning to the main conveyor`, "ok"]);
+      messages.push([det.secondScanT, `C-${i + 1} passes through the verification scanner again — corrected label accepted`, "ok"]);
     });
     const c3 = mk(base(2, 3, { size: SZ.C3s, spawn: 7.5, packEnd: 10.5, labelT: 10.7, move: 11.1, plan: 3 }));
     const c4 = mk(base(2, 4, { size: SZ.C4, spawn: 11, packEnd: 13.5, labelT: 13.7, move: 14.1, plan: 3 }));
@@ -750,7 +768,7 @@ export default function SupplyChainSim() {
   const [speed, setSpeed] = useState(1);
   const [showIn, setShowIn] = useState(true);
   const [showOut, setShowOut] = useState(true);
-  const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, msg: "Press start to run the full supply chain", msgKind: "info", done: false });
+  const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
   const [panelOpen, setPanelOpen] = useState(true);
 
   useEffect(() => {
@@ -1380,9 +1398,15 @@ export default function SupplyChainSim() {
     spurDown.position.set(MACHINE_X, 0.62, 1.7); spurDown.castShadow = true;
     const spurEast = new THREE.Mesh(new THREE.BoxGeometry(7.1, 0.12, 1.1), spurMat);
     spurEast.position.set(MACHINE_X + 3, 0.62, 3.4); spurEast.castShadow = true;
-    const spurUp = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 3.8), spurMat);
-    spurUp.position.set(MACHINE_X + 6, 0.62, 1.7); spurUp.castShadow = true;
-    relabelGroup.add(spurDown, spurEast, spurUp);
+    const spurToReturn = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 2.1), spurMat);
+    spurToReturn.position.set(MACHINE_X + 6, 0.62, 4.2); spurToReturn.castShadow = true;
+    const returnWest = new THREE.Mesh(new THREE.BoxGeometry(9.1, 0.12, 1.1), spurMat);
+    returnWest.position.set(MACHINE_X + 2, 0.62, 5.0); returnWest.castShadow = true;
+    const returnNorth = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 5.5), spurMat);
+    returnNorth.position.set(MACHINE_X - 2, 0.62, 2.5); returnNorth.castShadow = true;
+    const scannerApproach = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.12, 1.1), spurMat);
+    scannerApproach.position.set(MACHINE_X - 1, 0.62, 0); scannerApproach.castShadow = true;
+    relabelGroup.add(spurDown, spurEast, spurToReturn, returnWest, returnNorth, scannerApproach);
     for (let i = 0; i < 3; i++) {
       const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.6, 0.9), mat(0x232c38, 0.5, 0.4));
       leg.position.set(MACHINE_X + 1 + i * 2, 0.3, 3.4);
@@ -1403,7 +1427,10 @@ export default function SupplyChainSim() {
     const spurArrows = [
       [MACHINE_X, 0.8, "down"], [MACHINE_X, 2.4, "down"],
       [MACHINE_X + 1.3, 3.4, "east"], [MACHINE_X + 4.7, 3.4, "east"],
-      [MACHINE_X + 6, 2.4, "up"], [MACHINE_X + 6, 0.8, "up"],
+      [MACHINE_X + 6, 4.3, "down"],
+      [MACHINE_X + 4.5, 5.0, "west"], [MACHINE_X + 0.5, 5.0, "west"],
+      [MACHINE_X - 2, 4.0, "up"], [MACHINE_X - 2, 1.4, "up"],
+      [MACHINE_X - 1.0, 0, "east"],
     ];
     spurArrows.forEach(([ax, az, dir]) => {
       const a = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.36, 4), new THREE.MeshBasicMaterial({ color: C.red }));
@@ -1411,10 +1438,11 @@ export default function SupplyChainSim() {
       if (dir === "down") a.rotation.x = Math.PI / 2;
       if (dir === "up") a.rotation.x = -Math.PI / 2;
       if (dir === "east") a.rotation.z = -Math.PI / 2;
+      if (dir === "west") a.rotation.z = Math.PI / 2;
       relabelGroup.add(a);
     });
     const relabelSign = makeTextPlane("LABEL CORRECTION", C.red, 3.2, 0.5);
-    relabelSign.position.set(MACHINE_X + 3, 3.2, 4.3);
+    relabelSign.position.set(MACHINE_X + 3, 3.2, 5.8);
     relabelGroup.add(relabelSign);
     propsOut.add(relabelGroup);
 
@@ -2096,6 +2124,17 @@ export default function SupplyChainSim() {
   }, []);
 
   // ---------- UI actions ----------
+  const startAt = (startTime, message, viewName) => {
+    const S = simRef.current;
+    S.t = startTime;
+    S.playing = true;
+    S.rebuilt = true;
+    setPlaying(true);
+    setHud((h) => ({ ...h, t: startTime, done: false, msg: message, msgKind: "info" }));
+    if (viewName) setTimeout(() => setView(viewName), 0);
+  };
+  const startInbound = () => startAt(0, "Inbound started — trucks arrive at the receiving gates", "Full Chain");
+  const startPacking = () => startAt(PACK_OFF, `Packing started at ITEMS TO BE PACKED — ${SCENARIOS[scenario].title}`, "Packing Stations");
   const doPlay = () => { simRef.current.playing = true; setPlaying(true); };
   const doPause = () => { simRef.current.playing = false; setPlaying(false); };
   const doReset = () => {
@@ -2129,7 +2168,7 @@ export default function SupplyChainSim() {
     simRef.current = { ...simRef.current, t: 0, playing: false, data: nextData };
     setPlaying(false);
     setScenario(nextScenario);
-    setHud({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, msg: `Scenario S${nextScenario} selected — press Start to run the changed packing flow`, msgKind: "info", done: false });
+    setHud({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, msg: `S${nextScenario}: ${SCENARIOS[nextScenario].title} selected — choose a start mode`, msgKind: "info", done: false });
   };
   const setSpd = (v) => { simRef.current.speed = v; setSpeed(v); };
   const toggleIn = () => setShowIn((v) => { simRef.current.showIn = !v; return !v; });
@@ -2191,7 +2230,7 @@ export default function SupplyChainSim() {
         <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
           <span style={{ fontSize: 10, color: C.dim, fontFamily: "'IBM Plex Mono', monospace", marginRight: 2 }}>PACKING SCENARIO</span>
           {[1, 2, 3, 4].map((n) => (
-            <button key={n} style={smallBtn(scenario === n)} onClick={() => changeScenario(n)}>S{n}</button>
+            <button key={n} title={SCENARIOS[n].title} style={smallBtn(scenario === n)} onClick={() => changeScenario(n)}>S{n} · {SCENARIOS[n].short}</button>
           ))}
         </div>
         <button style={btn(showIn)} onClick={toggleIn}>{showIn ? "◉" : "○"} Inbound</button>
@@ -2211,9 +2250,9 @@ export default function SupplyChainSim() {
 
         <div style={{ position: "absolute", bottom: 14, right: 12, display: "flex", gap: 8, zIndex: 5 }}>
           <button
-            onClick={playing ? doPause : doPlay}
+            onClick={playing ? doPause : startPacking}
             style={{ width: 56, height: 56, borderRadius: "50%", border: `2px solid ${playing ? C.orange : C.green}`, background: "rgba(20,27,37,0.95)", color: playing ? C.orange : C.green, fontSize: 20, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.5)" }}
-            aria-label={playing ? "Pause" : "Start"}
+            aria-label={playing ? "Pause" : "Start with Packing"}
           >
             {playing ? "❚❚" : "▶"}
           </button>
@@ -2238,7 +2277,7 @@ export default function SupplyChainSim() {
           </div>
           {panelOpen && (
             <div style={{ padding: "6px 10px 10px" }}>
-              {stat("Packing scenario", `S${scenario}`, C.blue)}
+              {stat("Packing scenario", `S${scenario} · ${SCENARIOS[scenario].title}`, C.blue)}
               {stat("Warehouse time", hud.clock)}
               {stat("Trucks docked", `${hud.docked} / 2`, hud.docked === 2 ? C.green : C.text)}
               {stat("Boxes unloaded", `${hud.unloaded} / 4`)}
@@ -2262,7 +2301,8 @@ export default function SupplyChainSim() {
                 Stored {hud.stored}/4 · picked {hud.picked}/3 · packed {hud.packed}/7 · shipped {hud.shipped}/7 · {hud.clock}
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button style={btn(true)} onClick={doReset}>Replay</button>
+                <button style={btn(true)} onClick={startInbound}>Replay from Inbound</button>
+                <button style={btn(false)} onClick={startPacking}>Replay from Packing</button>
               </div>
             </div>
           </div>
@@ -2271,9 +2311,12 @@ export default function SupplyChainSim() {
 
       {/* Playback bar */}
       <div style={{ padding: "8px 12px", paddingBottom: "calc(8px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", background: C.panel }}>
-        {!playing
-          ? <button style={btn(true)} onClick={doPlay}>▶ Start</button>
-          : <button style={btn(false)} onClick={doPause}>❚❚ Pause</button>}
+        {!playing ? (
+          <>
+            <button style={btn(true)} onClick={startInbound}>▶ Start in Inbound</button>
+            <button style={{ ...btn(false), borderColor: C.green, color: C.green }} onClick={startPacking}>▶ Start with Packing</button>
+          </>
+        ) : <button style={btn(false)} onClick={doPause}>❚❚ Pause</button>}
         <button style={btn(false)} onClick={doReset}>↺ Reset</button>
         <button style={btn(false)} onClick={doStep}>⇥ Step</button>
         <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
