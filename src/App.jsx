@@ -762,379 +762,6 @@ function buildChainData(packScenario = 4) {
 }
 
 
-function ProcessGapVisualization({ onHome }) {
-  const mountRef = useRef(null);
-  const [running, setRunning] = useState(false);
-  const [step, setStep] = useState(0);
-  const [clock, setClock] = useState("13:35");
-  const animRef = useRef({ running: false, start: 0, raf: 0, progress: 0 });
-
-  const steps = [
-    { time: "13:35", title: "Customer order received", detail: "The required item has zero available stock and is still in inbound processing.", tone: C.blue },
-    { time: "13:50", title: "Item sorted in inbound", detail: "The item is assigned to its storage location, but the order remains blocked.", tone: C.yellow },
-    { time: "14:20", title: "Put-away completed after cutoff", detail: "The item reaches its storage location 20 minutes after the critical 14:00 cutoff.", tone: C.orange },
-    { time: "14:20", title: "Delivery note created", detail: "The order is released only when the item becomes available in storage.", tone: C.orange },
-    { time: "14:21", title: "Remaining process window is insufficient", detail: "Picking, packing and loading cannot be completed reliably before the 18:00 departure.", tone: C.red },
-    { time: "18:00", title: "Express Next Day departure missed", detail: "The outbound truck leaves without the order. The customer promise cannot be fulfilled today.", tone: C.red },
-  ];
-
-  useEffect(() => {
-    const mount = mountRef.current;
-    if (!mount) return undefined;
-
-    const w = Math.max(1, mount.clientWidth);
-    const h = Math.max(1, mount.clientHeight);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(w, h);
-    renderer.shadowMap.enabled = true;
-    mount.appendChild(renderer.domElement);
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(C.bg);
-    scene.fog = new THREE.Fog(C.bg, 45, 95);
-
-    const camera = new THREE.PerspectiveCamera(43, w / h, 0.1, 180);
-    const cam = { theta: -0.78, phi: 0.96, radius: 46, target: new THREE.Vector3(1.5, 1.2, 0) };
-    const applyCamera = () => {
-      const sp = Math.sin(cam.phi), cp = Math.cos(cam.phi);
-      camera.position.set(
-        cam.target.x + cam.radius * sp * Math.sin(cam.theta),
-        cam.target.y + cam.radius * cp,
-        cam.target.z + cam.radius * sp * Math.cos(cam.theta)
-      );
-      camera.lookAt(cam.target);
-    };
-    applyCamera();
-
-    scene.add(new THREE.AmbientLight(0x93a5c2, 0.72));
-    const light = new THREE.DirectionalLight(0xffffff, 1.25);
-    light.position.set(13, 22, 14);
-    light.castShadow = true;
-    scene.add(light);
-
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(82, 42),
-      new THREE.MeshStandardMaterial({ color: 0x151d28, roughness: 0.96 })
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-    scene.add(floor);
-    const grid = new THREE.GridHelper(82, 82, 0x293548, 0x202b39);
-    grid.position.y = 0.01;
-    scene.add(grid);
-
-    const addBox = (x, y, z, sx, sy, sz, color, parent = scene) => {
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(sx, sy, sz),
-        new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.06 })
-      );
-      mesh.position.set(x, y, z);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      parent.add(mesh);
-      return mesh;
-    };
-
-    const sprite = (main, sub, color, x, y, z, scale = 1, parent = scene) => {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: makeLabelTexture(main, sub, color), transparent: true, depthTest: false,
-      }));
-      s.position.set(x, y, z);
-      s.scale.set(4.2 * scale, 2.1 * scale, 1);
-      parent.add(s);
-      return s;
-    };
-
-    const makeConveyor = (x0, x1, z, width = 1.5) => {
-      const length = Math.abs(x1 - x0);
-      const cx = (x0 + x1) / 2;
-      addBox(cx, 0.7, z, length, 0.24, width, 0x273342);
-      for (let x = Math.min(x0, x1) + 0.35; x <= Math.max(x0, x1) - 0.35; x += 0.68) {
-        addBox(x, 0.87, z, 0.11, 0.1, width - 0.2, 0x6c7785);
-      }
-    };
-
-    const makeTruck = (x, z, color, rotation = 0) => {
-      const g = new THREE.Group();
-      addBox(0, 1.45, 0, 5.8, 2.9, 2.7, color, g);
-      addBox(3.7, 1.15, 0, 1.65, 2.3, 2.5, 0xb8c1ca, g);
-      for (const wx of [-2.1, 2.0, 3.8]) {
-        for (const wz of [-1.25, 1.25]) {
-          const wheel = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.42, 0.42, 0.28, 18),
-            new THREE.MeshStandardMaterial({ color: 0x10151c, roughness: 0.8 })
-          );
-          wheel.rotation.x = Math.PI / 2;
-          wheel.position.set(wx, 0.42, wz);
-          g.add(wheel);
-        }
-      }
-      g.position.set(x, 0, z);
-      g.rotation.y = rotation;
-      scene.add(g);
-      return g;
-    };
-
-    // Same spatial logic as the full model, but stripped to one order and one item.
-    addBox(-15.5, 0.055, 0, 13, 0.11, 12, 0x1b3146); // inbound
-    addBox(-5.0, 0.055, 0, 7.5, 0.11, 12, 0x263746); // sorting
-    addBox(8.0, 0.055, 0, 17, 0.11, 13, 0x3a3219); // storage / picking
-    addBox(0.0, 0.055, 10.0, 22, 0.11, 8, 0x1d3b2d); // packing
-    addBox(20.5, 0.055, 6.5, 12, 0.11, 10, 0x412025); // shipping
-
-    sprite("INBOUND", "one critical item", C.blue, -16, 5.1, -4.5, 0.82);
-    sprite("SORTING", "assigned to storage", C.yellow, -5, 5.1, -4.5, 0.82);
-    sprite("STORAGE & PICKING", "storage cutoff 14:00", C.orange, 8, 6.0, -4.8, 0.92);
-    sprite("PACKING", "one customer order", C.green, 0, 5.1, 12.9, 0.82);
-    sprite("SHIPPING", "truck departure 18:00", C.red, 20.5, 5.1, 10.5, 0.82);
-
-    // Inbound dock and reversed truck.
-    addBox(-17.5, 2.3, -1.7, 0.45, 4.6, 4.2, 0x657180);
-    sprite("INBOUND GATE", "rear unloading", C.blue, -17.4, 5.1, -1.7, 0.58);
-    makeTruck(-21.4, -1.7, 0x397fae, 0);
-
-    // Receiving and sorting path.
-    makeConveyor(-14.6, -7.4, -1.7, 1.6);
-    addBox(-5.6, 1.02, -1.7, 3.3, 0.18, 2.3, 0x687585);
-    for (const lx of [-6.8, -4.4]) for (const lz of [-2.5, -0.9]) addBox(lx, 0.48, lz, 0.13, 0.95, 0.13, 0x4e5967);
-
-    // Larger high-bay rack, same storage zone as the full chain.
-    const rackX = 8.4;
-    const rackZ = -0.4;
-    for (const x of [4.5, 12.3]) for (const z of [-3.2, 2.4]) addBox(x, 3.4, z, 0.2, 6.8, 0.2, 0x667383);
-    for (const y of [0.65, 1.85, 3.05, 4.25, 5.45, 6.65]) addBox(rackX, y, rackZ, 8, 0.14, 5.8, 0x566273);
-    const criticalSlot = addBox(rackX, 3.1, rackZ, 2.2, 0.18, 1.8, 0xff8c42);
-    sprite("CRITICAL STORAGE LOCATION", "actual put-away 14:20", C.orange, rackX, 7.6, rackZ, 0.66);
-
-    // Picking connection to the existing packing-style area.
-    makeConveyor(9.5, 0.5, 7.2, 1.55);
-    sprite("ITEMS TO BE PACKED", "order released after put-away", C.green, 4.8, 3.45, 7.2, 0.72);
-
-    // Single packing station only.
-    const pack = new THREE.Group();
-    addBox(0, 1.1, 0, 3.1, 0.18, 1.65, 0x6e7b8b, pack);
-    for (const px of [-1.25, 1.25]) for (const pz of [-0.62, 0.62]) addBox(px, 0.52, pz, 0.14, 1.0, 0.14, 0x4e5967, pack);
-    pack.position.set(0.5, 0, 10.0);
-    scene.add(pack);
-    sprite("PACKING STATION", "insufficient remaining time", C.red, 0.5, 3.15, 10.0, 0.65);
-
-    // Outbound conveyor, gate and truck.
-    makeConveyor(3.0, 17.0, 8.2, 1.55);
-    addBox(18.0, 2.35, 8.2, 0.45, 4.7, 4.2, 0x657180);
-    sprite("TRUCK MUST BE LOADED", "by 18:00 · OTS", C.red, 18.0, 5.2, 8.2, 0.66);
-    const outboundTruck = makeTruck(22.2, 8.2, 0xc46c28, Math.PI);
-
-    // One customer order only.
-    const orderCard = addBox(0.3, 2.35, 4.3, 5.2, 4.4, 0.25, 0x1a2331);
-    sprite("CUSTOMER ORDER", "1 item · zero stock", C.blue, 0.3, 3.55, 4.16, 0.76);
-    const orderStatus = sprite("ORDER BLOCKED", "waiting for storage availability", C.red, 0.3, 2.2, 4.14, 0.66);
-
-    // One item / tote moving through the existing process chain.
-    const tote = addBox(-13.8, 1.18, -1.7, 1.25, 0.78, 0.95, 0x00c8ff);
-    const toteTag = sprite("REQUIRED ITEM", "for this customer order", C.blue, -13.8, 2.15, -1.7, 0.52);
-
-    // Delivery note appears at put-away.
-    const note = addBox(13.8, 1.3, 4.1, 1.35, 0.08, 1.85, 0xf4f6f8);
-    note.rotation.z = -0.08;
-    note.visible = false;
-    const noteLabel = sprite("DELIVERY NOTE", "created at 14:20", C.orange, 13.8, 2.3, 4.1, 0.56);
-    noteLabel.visible = false;
-
-    // Red time-gap overlays along downstream process.
-    const pickBlock = addBox(7.0, 1.65, 7.2, 0.28, 2.8, 2.2, 0xff5c5c);
-    pickBlock.visible = false;
-    const packBlock = addBox(2.7, 1.65, 8.2, 0.28, 2.8, 2.2, 0xff5c5c);
-    packBlock.visible = false;
-    const shipBlock = addBox(16.2, 1.65, 8.2, 0.28, 2.8, 2.2, 0xff5c5c);
-    shipBlock.visible = false;
-    const gapLabel = sprite("TIME GAP", "3h40 left · not enough for pick, pack and load", C.red, 8.8, 4.4, 7.8, 0.82);
-    gapLabel.visible = false;
-
-    let dragging = false, px = 0, py = 0;
-    const down = (e) => { dragging = true; px = e.clientX; py = e.clientY; renderer.domElement.setPointerCapture?.(e.pointerId); };
-    const move = (e) => {
-      if (!dragging) return;
-      cam.theta -= (e.clientX - px) * 0.006;
-      cam.phi = THREE.MathUtils.clamp(cam.phi + (e.clientY - py) * 0.004, 0.3, 1.35);
-      px = e.clientX; py = e.clientY; applyCamera();
-    };
-    const up = () => { dragging = false; };
-    const wheel = (e) => { cam.radius = THREE.MathUtils.clamp(cam.radius + e.deltaY * 0.018, 24, 64); applyCamera(); };
-    renderer.domElement.addEventListener("pointerdown", down);
-    renderer.domElement.addEventListener("pointermove", move);
-    renderer.domElement.addEventListener("pointerup", up);
-    renderer.domElement.addEventListener("wheel", wheel, { passive: true });
-
-    const path = [
-      [0.00, -13.8, 1.18, -1.7],
-      [0.18, -8.0, 1.18, -1.7],
-      [0.36, -5.6, 1.25, -1.7],
-      [0.54, 2.5, 1.35, -0.8],
-      [0.61, rackX, 3.55, rackZ],
-      [1.00, rackX, 3.55, rackZ],
-    ];
-
-    const interpolatePath = (p) => {
-      for (let i = 0; i < path.length - 1; i++) {
-        const a = path[i], b = path[i + 1];
-        if (p >= a[0] && p <= b[0]) {
-          const f = (p - a[0]) / Math.max(0.0001, b[0] - a[0]);
-          return new THREE.Vector3(
-            THREE.MathUtils.lerp(a[1], b[1], f),
-            THREE.MathUtils.lerp(a[2], b[2], f),
-            THREE.MathUtils.lerp(a[3], b[3], f)
-          );
-        }
-      }
-      return new THREE.Vector3(path[path.length - 1][1], path[path.length - 1][2], path[path.length - 1][3]);
-    };
-
-    const animate = (now) => {
-      animRef.current.raf = requestAnimationFrame(animate);
-      let p = animRef.current.progress || 0;
-      if (animRef.current.running) p = Math.min(1, (now - animRef.current.start) / 13500);
-      animRef.current.progress = p;
-
-      let active = 0;
-      if (p < 0.18) active = 0;
-      else if (p < 0.38) active = 1;
-      else if (p < 0.61) active = 2;
-      else if (p < 0.69) active = 3;
-      else if (p < 0.86) active = 4;
-      else active = 5;
-      setStep((prev) => prev === active ? prev : active);
-      setClock((prev) => prev === steps[active].time ? prev : steps[active].time);
-
-      const pos = interpolatePath(p);
-      tote.position.copy(pos);
-      toteTag.position.set(pos.x, pos.y + 0.95, pos.z);
-
-      const released = p >= 0.61;
-      note.visible = released;
-      noteLabel.visible = released;
-      if (released && !orderStatus.userData.updated) {
-        orderStatus.material.map?.dispose();
-        orderStatus.material.map = makeLabelTexture("DELIVERY NOTE CREATED", "14:20 · order released", C.orange);
-        orderStatus.material.needsUpdate = true;
-        orderStatus.userData.updated = true;
-      }
-
-      pickBlock.visible = p >= 0.70;
-      packBlock.visible = p >= 0.72;
-      shipBlock.visible = p >= 0.74;
-      gapLabel.visible = p >= 0.70;
-
-      criticalSlot.material.emissive = new THREE.Color(p >= 0.58 ? 0xff8c42 : 0x000000);
-      criticalSlot.material.emissiveIntensity = p >= 0.58 ? 0.55 + Math.sin(now * 0.008) * 0.18 : 0;
-
-      if (p >= 0.86) outboundTruck.position.x = 22.2 + Math.min(8, (p - 0.86) * 42);
-      if (p >= 1) animRef.current.running = false;
-      renderer.render(scene, camera);
-    };
-
-    animRef.current.raf = requestAnimationFrame(animate);
-    const resize = () => {
-      const nw = Math.max(1, mount.clientWidth), nh = Math.max(1, mount.clientHeight);
-      camera.aspect = nw / nh;
-      camera.updateProjectionMatrix();
-      renderer.setSize(nw, nh);
-    };
-    window.addEventListener("resize", resize);
-
-    return () => {
-      cancelAnimationFrame(animRef.current.raf);
-      window.removeEventListener("resize", resize);
-      renderer.domElement.removeEventListener("pointerdown", down);
-      renderer.domElement.removeEventListener("pointermove", move);
-      renderer.domElement.removeEventListener("pointerup", up);
-      renderer.domElement.removeEventListener("wheel", wheel);
-      scene.traverse((o) => {
-        o.geometry?.dispose?.();
-        if (o.material) {
-          const ms = Array.isArray(o.material) ? o.material : [o.material];
-          ms.forEach((m) => { m.map?.dispose?.(); m.dispose?.(); });
-        }
-      });
-      renderer.dispose();
-      if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
-    };
-  }, []);
-
-  const start = () => {
-    animRef.current.progress = 0;
-    animRef.current.start = performance.now();
-    animRef.current.running = true;
-    setRunning(true);
-    setStep(0);
-    setClock("13:35");
-    window.setTimeout(() => setRunning(false), 13600);
-  };
-  const reset = () => {
-    animRef.current.running = false;
-    animRef.current.progress = 0;
-    setRunning(false);
-    setStep(0);
-    setClock("13:35");
-  };
-
-  return (
-    <div style={{ position:"absolute", inset:0, background:C.bg, color:C.text, fontFamily:"'Inter',system-ui,sans-serif", display:"flex", flexDirection:"column", overflow:"hidden" }}>
-      <div style={{ minHeight:68, padding:"10px 14px", borderBottom:`1px solid ${C.line}`, background:C.panel, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
-        <div>
-          <div style={{ color:C.orange, fontFamily:"'IBM Plex Mono',monospace", fontSize:10, fontWeight:800, letterSpacing:1.2 }}>PROCESS GAP VISUALIZATION · EXISTING SUPPLY CHAIN</div>
-          <div style={{ fontSize:21, fontWeight:800, marginTop:3 }}>Late put-away blocks Express Next Day shipping</div>
-        </div>
-        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-          <div style={{ background:C.panel2, border:`1px solid ${clock >= "14:00" ? C.orange : C.line}`, borderRadius:10, padding:"8px 12px", textAlign:"right" }}>
-            <div style={{ color:C.dim, fontSize:8, letterSpacing:1 }}>SIMULATION TIME</div>
-            <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontWeight:800, fontSize:20, color:clock >= "18:00" ? C.red : clock >= "14:00" ? C.orange : C.text }}>{clock}</div>
-          </div>
-          <button onClick={onHome} style={{ border:`1px solid ${C.line}`, background:C.panel2, color:C.dim, borderRadius:9, padding:"10px 12px", cursor:"pointer" }}>⌂ Home</button>
-        </div>
-      </div>
-
-      <div style={{ flex:1, minHeight:0, position:"relative" }}>
-        <div ref={mountRef} style={{ position:"absolute", inset:0, touchAction:"none" }} />
-
-        <div style={{ position:"absolute", top:12, left:12, width:330, background:"rgba(20,27,37,.95)", border:`1px solid ${C.orange}`, borderRadius:12, padding:13 }}>
-          <div style={{ color:C.orange, fontFamily:"'IBM Plex Mono',monospace", fontSize:9, fontWeight:800, letterSpacing:1 }}>ONE ORDER · ONE ITEM · FULL PROCESS LAYOUT</div>
-          <div style={{ fontSize:16, fontWeight:800, margin:"7px 0" }}>{steps[step].title}</div>
-          <div style={{ color:C.dim, lineHeight:1.5, fontSize:12.5 }}>{steps[step].detail}</div>
-          <div style={{ marginTop:11, paddingTop:9, borderTop:`1px solid ${C.line}`, color:C.text, fontSize:11.5, lineHeight:1.45 }}>
-            <b>Business rule:</b> the item must be available in storage by 14:00 to preserve enough time for picking, packing and loading before the 18:00 OTS departure.
-          </div>
-        </div>
-
-        <div style={{ position:"absolute", right:12, top:12, width:285, background:"rgba(20,27,37,.95)", border:`1px solid ${C.line}`, borderRadius:12, padding:12 }}>
-          <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:9, letterSpacing:1, color:C.dim, marginBottom:8 }}>PROCESS CONSEQUENCE</div>
-          <div style={{ display:"grid", gap:7, fontSize:11.5 }}>
-            <div style={{ display:"flex", justifyContent:"space-between" }}><span style={{color:C.dim}}>Storage cutoff</span><b style={{color:C.orange}}>14:00</b></div>
-            <div style={{ display:"flex", justifyContent:"space-between" }}><span style={{color:C.dim}}>Actual put-away</span><b style={{color:C.red}}>14:20</b></div>
-            <div style={{ display:"flex", justifyContent:"space-between" }}><span style={{color:C.dim}}>Shipping cutoff</span><b>18:00</b></div>
-            <div style={{ display:"flex", justifyContent:"space-between" }}><span style={{color:C.dim}}>Time remaining</span><b style={{color:C.orange}}>3h 40m</b></div>
-          </div>
-          <div style={{ marginTop:10, borderLeft:`3px solid ${C.red}`, padding:"8px 9px", background:"rgba(255,92,92,.08)", fontSize:11.5, lineHeight:1.45 }}>
-            <b style={{color:C.red}}>Customer impact:</b> the order is released too late and misses the Express Next Day truck.
-          </div>
-        </div>
-
-        <div style={{ position:"absolute", left:12, bottom:12, display:"flex", gap:8 }}>
-          <button onClick={start} style={{ border:`1px solid ${C.green}`, background:"rgba(61,220,132,.12)", color:C.green, borderRadius:9, padding:"10px 14px", fontWeight:800, cursor:"pointer" }}>▶ {running ? "Restart" : "Start visualization"}</button>
-          <button onClick={reset} style={{ border:`1px solid ${C.line}`, background:C.panel2, color:C.dim, borderRadius:9, padding:"10px 12px", cursor:"pointer" }}>↺ Reset</button>
-        </div>
-        <div style={{ position:"absolute", right:12, bottom:12, color:C.dim, fontSize:10, background:"rgba(13,18,25,.82)", border:`1px solid ${C.line}`, borderRadius:8, padding:"7px 9px" }}>Drag to rotate · Scroll to zoom</div>
-      </div>
-
-      <div style={{ padding:"9px 14px", background:C.panel, borderTop:`1px solid ${C.line}` }}>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:5 }}>
-          {steps.map((s,i)=><div key={`${s.time}-${s.title}`} style={{ borderTop:`3px solid ${i<=step?s.tone:C.line}`, background:i===step?"rgba(255,255,255,.04)":"transparent", padding:"7px 6px 5px", minWidth:0 }}><div style={{ color:i<=step?s.tone:C.dim, fontFamily:"'IBM Plex Mono',monospace", fontSize:9, fontWeight:800 }}>{s.time}</div><div style={{ color:i===step?C.text:C.dim, fontSize:9.5, marginTop:3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.title}</div></div>)}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ---------- main component ----------
 export default function SupplyChainSim() {
   const mountRef = useRef(null);
@@ -1149,9 +776,10 @@ export default function SupplyChainSim() {
   const [showLink, setShowLink] = useState(false);
   const [showShipping, setShowShipping] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
+  const [startPoint, setStartPoint] = useState("packing");
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
   const [showLanding, setShowLanding] = useState(true);
-  const [experienceType, setExperienceType] = useState("packing");
 
   useEffect(() => {
     // The 3D mount is intentionally absent while the landing page is visible.
@@ -2708,8 +2336,18 @@ export default function SupplyChainSim() {
     Object.assign(simRef.current, { showIn: inbound, showOut: outbound, showLink: link, showShipping: shipping });
     world.current.setScope?.({ inbound, outbound, link, shipping });
   };
-  const showPackingOnly = () => applyScope({ inbound: false, outbound: true, link: false, shipping: false });
-  const showFullChain = () => applyScope({ inbound: true, outbound: true, link: true, shipping: true });
+  const showPackingOnly = () => { setScopeOpen(false); applyScope({ inbound: false, outbound: true, link: false, shipping: false }); };
+  const showFullChain = () => { setScopeOpen(false); applyScope({ inbound: true, outbound: true, link: true, shipping: true }); };
+  const showCustomScope = () => setScopeOpen(true);
+  const startSelected = () => {
+    if (startPoint === "inbound") {
+      showFullChain();
+      startInbound();
+    } else {
+      showPackingOnly();
+      startPacking();
+    }
+  };
   const toggleIn = () => applyScope({ inbound: !showIn });
   const toggleOut = () => applyScope({ outbound: !showOut });
   const toggleLink = () => applyScope({ link: !showLink });
@@ -2799,17 +2437,14 @@ export default function SupplyChainSim() {
   const storageCutoffProgress = ((14 * 60 - dayStartMinutes) / (dayEndMinutes - dayStartMinutes)) * 100;
 
   const openExperience = (type) => {
-    setExperienceType(type === "gaps" ? "gap" : "packing");
     setShowLanding(false);
     if (type === "current") {
       changeScenario(1);
       showPackingOnly();
       window.setTimeout(startPacking, 0);
-    } else if (type === "theoretical") {
+    } else {
       changeScenario(2);
       showPackingOnly();
-    } else {
-      return;
     }
   };
 
@@ -2824,39 +2459,30 @@ export default function SupplyChainSim() {
         <div style={{ width: "min(1120px, 100%)" }}>
           <div style={{ marginBottom: 28, maxWidth: 800 }}>
             <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 800, letterSpacing: 1.5, marginBottom: 10 }}>SUPPLY CHAIN DIGITAL TWIN</div>
-            <h1 style={{ margin: 0, fontSize: "clamp(30px, 5vw, 54px)", lineHeight: 1.05 }}>Explore the packing process and its operational dependencies</h1>
-            <p style={{ color: C.dim, fontSize: 16, lineHeight: 1.65, maxWidth: 780, margin: "16px 0 0" }}>This interactive 3D world visualizes how goods move from inbound through storage and picking into four alternative packing and labelling scenarios. Select the perspective that is most relevant for your discussion.</p>
+            <h1 style={{ margin: 0, fontSize: "clamp(30px, 5vw, 54px)", lineHeight: 1.05 }}>Understand today’s label process and compare future concepts</h1>
+            <p style={{ color: C.dim, fontSize: 16, lineHeight: 1.65, maxWidth: 780, margin: "16px 0 0" }}>Choose a focused view of the current process or compare three alternative concepts in the same interactive 3D packing world.</p>
           </div>
-          <div className="landing-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16 }}>
+          <div className="landing-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 }}>
             <button onClick={() => openExperience("current")} style={landingCard(C.blue)}>
               <div style={{ color: C.blue, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 800, letterSpacing: 1.2 }}>01 · CURRENT STATE</div>
-              <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>Label immediately</h2>
+              <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>View Current Label Process</h2>
               <p style={{ color: C.dim, lineHeight: 1.55, margin: 0 }}>See today’s packing flow, where labels are printed immediately although the final number of packages is not yet known.</p>
               <div style={{ marginTop: "auto", paddingTop: 18, color: C.blue, fontWeight: 800 }}>Open current state →</div>
             </button>
             <button onClick={() => openExperience("theoretical")} style={landingCard(C.green)}>
               <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 800, letterSpacing: 1.2 }}>02 · THEORETICAL SCENARIOS</div>
-              <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>Compare S2–S4</h2>
+              <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>Compare Future Label Concepts</h2>
               <p style={{ color: C.dim, lineHeight: 1.55, margin: 0 }}>Explore staging, interim-label loops and predictive ORTEC proposals as alternative future-state concepts.</p>
               <div style={{ marginTop: "auto", paddingTop: 18, color: C.green, fontWeight: 800 }}>Explore scenarios →</div>
             </button>
-            <button onClick={() => openExperience("gaps")} style={landingCard(C.orange)}>
-              <div style={{ color: C.orange, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 800, letterSpacing: 1.2 }}>03 · PROCESS GAP VISUALIZATION</div>
-              <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>Late put-away after 14:00</h2>
-              <p style={{ color: C.dim, lineHeight: 1.55, margin: 0 }}>Follow one zero-stock customer order whose required item reaches storage after 14:00, triggering the delivery note too late to pick, pack and load before 18:00.</p>
-              <div style={{ marginTop: "auto", paddingTop: 18, color: C.orange, fontWeight: 800 }}>Open process gap →</div>
-            </button>
           </div>
-          <div style={{ marginTop: 18, color: C.dim, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>You can switch scenarios, model scope and camera views at any time inside the 3D experience.</div>
+          <div style={{ marginTop: 18, color: C.dim, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>Start with the focused packing view. Expand to the end-to-end supply chain only when the broader process context is needed.</div>
         </div>
         <style>{`@media (max-width: 820px) { .landing-grid { grid-template-columns: 1fr !important; } }`}</style>
       </div>
     );
   }
 
-  if (experienceType === "gap") {
-    return <ProcessGapVisualization onHome={() => { setShowLanding(true); setExperienceType("packing"); }} />;
-  }
 
   return (
     <div style={{ position: "absolute", inset: 0, background: C.bg, color: C.text, fontFamily: "'Space Grotesk', system-ui, sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -2890,8 +2516,16 @@ export default function SupplyChainSim() {
             <span style={{ color: C.text }}> · {SCENARIOS[scenario].short}</span>
           </div>
           <button style={{ ...btn(false), borderColor: C.line, color: C.dim }} onClick={() => { doPause(); setShowLanding(true); }}>⌂ Home</button>
-          <button style={btn(true)} onClick={startInbound}>▶ Start in Inbound</button>
-          <button style={{ ...btn(false), borderColor: C.green, color: C.green }} onClick={startPacking}>▶ Start with Packing</button>
+          <select
+            value={startPoint}
+            onChange={(e) => setStartPoint(e.target.value)}
+            aria-label="Simulation start point"
+            style={{ ...btn(false), appearance: "none", paddingRight: 30, background: C.panel2, color: C.text }}
+          >
+            <option value="packing">Start at Packing</option>
+            <option value="inbound">Start at Inbound</option>
+          </select>
+          <button style={{ ...btn(true), minWidth: 138 }} onClick={startSelected}>▶ Start Simulation</button>
         </div>
       </div>
 
@@ -2901,7 +2535,7 @@ export default function SupplyChainSim() {
 
 
         {/* Dynamic scenario objective */}
-        <div style={{ position: "absolute", top: 12, left: 12, width: 340, maxWidth: "calc(100% - 310px)", background: "rgba(13,18,25,0.94)", border: `1px solid ${objective.accent}`, borderRadius: 11, padding: "11px 13px", boxShadow: "0 8px 24px rgba(0,0,0,0.28)" }}>
+        <div style={{ position: "absolute", top: 12, left: 12, width: 318, maxWidth: "calc(100% - 300px)", background: "rgba(13,18,25,0.94)", border: `1px solid ${objective.accent}`, borderRadius: 11, padding: "11px 13px", boxShadow: "0 8px 20px rgba(0,0,0,0.20)" }}>
           <div style={{ color: objective.accent, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: 1.1, fontWeight: 800, marginBottom: 5 }}>{objective.eyebrow} · S{scenario}</div>
           <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>{objective.title}</div>
           <div style={{ fontSize: 11.5, lineHeight: 1.48, color: C.text }}>{objective.description}</div>
@@ -2909,61 +2543,55 @@ export default function SupplyChainSim() {
           <div style={{ marginTop: 7, color: C.dim, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9 }}>OBJECTIVE · Correct HU sequence on every label — e.g. 1/3, 2/3, 3/3 instead of 1/X.</div>
         </div>
 
-                {/* Right scenario panel */}
-        <div className="desktop-side-panel" style={{ position: "absolute", top: 12, right: 12, width: 270, display: "flex", flexDirection: "column", gap: 9 }}>
-          <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden" }}>
-            <div style={{ padding: "9px 11px", background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>PACKING PROCESS</div>
-
+                {/* Compact scenario and scope panel */}
+        <div className="desktop-side-panel" style={{ position: "absolute", top: 12, right: 12, width: 260, display: "flex", flexDirection: "column", gap: 9 }}>
+          <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 10px 30px rgba(0,0,0,.22)" }}>
+            <div style={{ padding: "9px 11px", background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>LABEL PROCESS</div>
             <div style={{ padding: 9, borderBottom: `1px solid ${C.line}` }}>
               <div style={{ color: C.blue, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 800, letterSpacing: 1.1, marginBottom: 7 }}>CURRENT STATE</div>
               <button onClick={() => changeScenario(1)} style={{ ...smallBtn(scenario === 1), width: "100%", textAlign: "left", padding: "9px 10px", display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 8, alignItems: "center" }}>
-                <span>S1</span>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>Label immediately</span>
+                <span>S1</span><span>Label immediately</span>
               </button>
-              <div style={{ marginTop: 7, fontSize: 10.5, color: C.dim, lineHeight: 1.45 }}>Today’s process: labels are created before the final Handling Unit count is known.</div>
             </div>
-
             <div style={{ padding: 9 }}>
-              <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 800, letterSpacing: 1.1, marginBottom: 7 }}>PACK SCENARIOS FOR A NEW LABEL PROCESS</div>
+              <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 800, letterSpacing: 1.1, marginBottom: 7 }}>NEW LABEL PROCESS</div>
               <div style={{ display: "grid", gap: 6 }}>
                 {[2, 3, 4].map((n) => (
                   <button key={n} onClick={() => changeScenario(n)} style={{ ...smallBtn(scenario === n), width: "100%", textAlign: "left", padding: "9px 10px", display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 8, alignItems: "center" }}>
-                    <span>S{n}</span>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{SCENARIOS[n].title}</span>
+                    <span>S{n}</span><span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{SCENARIOS[n].short}</span>
                   </button>
                 ))}
               </div>
-              <div style={{ marginTop: 8, fontSize: 10.5, color: C.dim, lineHeight: 1.45 }}>{scenario === 1 ? "Select S2–S4 to compare alternative future-state label processes." : scenarioDescriptions[scenario]}</div>
             </div>
+            <button onClick={() => setDetailsOpen((v) => !v)} style={{ width: "100%", border: 0, borderTop: `1px solid ${C.line}`, background: "rgba(26,35,49,.82)", color: C.dim, padding: "8px 10px", cursor: "pointer", display: "flex", justifyContent: "space-between", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9 }}>
+              <span>SCENARIO DETAILS</span><span>{detailsOpen ? "−" : "+"}</span>
+            </button>
+            {detailsOpen && <div style={{ padding: "9px 10px", color: C.dim, fontSize: 10.5, lineHeight: 1.48, borderTop: `1px solid ${C.line}` }}>{scenarioDescriptions[scenario]}</div>}
           </div>
 
-          <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 }}>
-            <div onClick={() => setScopeOpen((v) => !v)} style={{ padding: "8px 10px", background: C.panel2, cursor: "pointer", display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
-              <span>MODEL SCOPE</span><span>{scopeOpen ? "−" : "+"}</span>
-            </div>
-            <div style={{ padding: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-              <button style={smallBtn(!showIn && showOut && !showLink && !showShipping)} onClick={showPackingOnly}>Packing only</button>
-              <button style={smallBtn(showIn && showOut && showLink && showShipping)} onClick={showFullChain}>Full chain</button>
+          <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 10px 30px rgba(0,0,0,.18)" }}>
+            <div style={{ padding: "9px 11px", background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>MODEL VIEW</div>
+            <div style={{ padding: 8, display: "grid", gap: 6 }}>
+              <button style={smallBtn(!scopeOpen && !showIn && showOut && !showLink && !showShipping)} onClick={showPackingOnly}>Packing Focus</button>
+              <button style={smallBtn(!scopeOpen && showIn && showOut && showLink && showShipping)} onClick={showFullChain}>End-to-End</button>
+              <button style={smallBtn(scopeOpen)} onClick={showCustomScope}>Custom View</button>
             </div>
             {scopeOpen && <div style={{ padding: "0 8px 9px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
-              <button style={smallBtn(showIn)} onClick={toggleIn}>{showIn ? "◉" : "○"} Inbound + Storage</button>
-              <button style={smallBtn(showLink)} onClick={toggleLink}>{showLink ? "◉" : "○"} Picking link</button>
+              <button style={smallBtn(showIn)} onClick={toggleIn}>{showIn ? "◉" : "○"} Inbound</button>
+              <button style={smallBtn(showLink)} onClick={toggleLink}>{showLink ? "◉" : "○"} Picking</button>
               <button style={smallBtn(showOut)} onClick={toggleOut}>{showOut ? "◉" : "○"} Packing</button>
               <button style={smallBtn(showShipping)} onClick={toggleShipping}>{showShipping ? "◉" : "○"} Shipping</button>
             </div>}
-            <div style={{ padding: "7px 9px", borderTop: `1px solid ${C.line}`, color: C.dim, lineHeight: 1.45 }}>
-              Default: packing process only. Camera views are limited to the currently visible model scope.
-            </div>
           </div>
         </div>
 
         {/* Camera views */}
-        <div style={{ position: "absolute", bottom: 54, left: 12, width: 178, background: "rgba(13,18,25,0.92)", border: `1px solid ${C.line}`, borderRadius: 10, padding: 9, boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: 1.2, color: C.dim, marginBottom: 7 }}>CAMERA VIEWS</div>
-          <div style={{ display: "grid", gap: 4 }}>
+        <div style={{ position: "absolute", bottom: 54, left: 12, maxWidth: "calc(100% - 330px)", background: "rgba(13,18,25,0.90)", border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.22)" }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, letterSpacing: 1.2, color: C.dim, marginBottom: 6 }}>CAMERA</div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
             {availableCameraViews.map((v) => (
-              <button key={v} style={{ ...smallBtn(false), textAlign: "left", width: "100%", background: "rgba(26,35,49,0.9)" }} onClick={() => setView(v)}>
-                ○ {v === "Full Chain" ? "Overview" : v}
+              <button key={v} style={{ ...smallBtn(false), background: "rgba(26,35,49,0.86)", padding: "5px 8px", fontSize: 10 }} onClick={() => setView(v)}>
+                {v === "Full Chain" ? "Overview" : v}
               </button>
             ))}
           </div>
