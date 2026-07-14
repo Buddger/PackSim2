@@ -2299,24 +2299,31 @@ export default function SupplyChainSim() {
     whiteSpace: "nowrap",
   });
   const smallBtn = (active) => ({ ...btn(active), padding: "5px 9px", fontSize: 11 });
-  const stat = (label, value, color) => (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "3px 0", borderBottom: `1px solid ${C.line}` }}>
-      <span style={{ color: C.dim }}>{label}</span>
-      <span style={{ color: color || C.text, fontWeight: 700 }}>{value}</span>
-    </div>
-  );
 
-  const processSteps = ["Inbound", "Sorting", "Put-away", "Picking", "Packing", "Labeling", "Shipping"];
-  const messageUpper = String(hud.msg || "").toUpperCase();
-  let activeProcessIndex = 0;
-  if (hud.shipped > 0 || messageUpper.includes("SHIP")) activeProcessIndex = 6;
-  else if (hud.labelled > 0 || hud.inFix > 0 || messageUpper.includes("LABEL") || messageUpper.includes("SCANNER") || messageUpper.includes("CORRECTION")) activeProcessIndex = 5;
-  else if (hud.packed > 0 || messageUpper.includes("PACK")) activeProcessIndex = 4;
-  else if (hud.picked > 0 || messageUpper.includes("PICK")) activeProcessIndex = 3;
-  else if (hud.stored > 0 || messageUpper.includes("PUT-AWAY") || messageUpper.includes("STORAGE")) activeProcessIndex = 2;
-  else if (hud.unloaded > 0 || messageUpper.includes("SORT")) activeProcessIndex = 1;
+  const chronology = data.messages
+    .filter(([eventT]) => eventT <= hud.t + 0.01)
+    .slice(-10)
+    .map(([eventT, text, eventKind], index, visibleEvents) => ({
+      eventT,
+      text,
+      eventKind: eventKind || "info",
+      clock: fmtClock(data.clockStart + eventT * data.rate),
+      isLatest: index === visibleEvents.length - 1,
+    }));
 
-  const processProgress = Math.max(0, Math.min(100, (hud.t / data.duration) * 100));
+  if (chronology.length === 0) {
+    chronology.push({
+      eventT: 0,
+      text: hud.msg || "Choose a start mode",
+      eventKind: hud.msgKind || "info",
+      clock: hud.clock,
+      isLatest: true,
+    });
+  }
+
+  const logColor = (eventKind) =>
+    eventKind === "ok" ? C.green : eventKind === "warn" ? C.orange : eventKind === "err" ? C.red : C.blue;
+
   const scenarioDescriptions = {
     1: "Labels are printed immediately. The final package count is still unknown, so labels show 1/X, 2/X or 3/X.",
     2: "Packages wait in staging until the complete order is packed. Final labels are then applied together.",
@@ -2360,27 +2367,6 @@ export default function SupplyChainSim() {
       <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
         <div ref={mountRef} style={{ position: "absolute", inset: 0 }} />
 
-        {/* Current process card */}
-        <div style={{ position: "absolute", top: 12, left: 12, width: 230, background: "rgba(13,18,25,0.92)", border: `1px solid ${C.line}`, borderRadius: 10, padding: 11, fontFamily: "'IBM Plex Mono', monospace", boxShadow: "0 8px 24px rgba(0,0,0,0.25)" }}>
-          <div style={{ fontSize: 9, letterSpacing: 1.2, color: C.dim, marginBottom: 7 }}>CURRENT PROCESS</div>
-          <div style={{ fontSize: 14, color: C.green, fontWeight: 700, marginBottom: 8 }}>{processSteps[activeProcessIndex]}</div>
-          <div style={{ height: 5, borderRadius: 3, background: C.panel2, overflow: "hidden", marginBottom: 8 }}>
-            <div style={{ width: `${processProgress}%`, height: "100%", background: C.green, transition: "width 0.15s linear" }} />
-          </div>
-          <div style={{ fontSize: 10, color: C.dim, lineHeight: 1.45 }}>
-            <div><span style={{ color: C.text }}>Current step:</span> {processSteps[activeProcessIndex]}</div>
-            <div><span style={{ color: C.text }}>Warehouse time:</span> {hud.clock}</div>
-            <div><span style={{ color: C.orange }}>Sort → put-away:</span> Ø 2.5 h compressed</div>
-            <div><span style={{ color: C.yellow }}>Shipping cutoff:</span> Truck departure 18:00</div>
-          </div>
-        </div>
-
-        {/* Event message */}
-        <div style={{ position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)", maxWidth: "48%", background: "rgba(13,18,25,0.9)", border: `1px solid ${msgColor}`, borderRadius: 10, padding: "7px 12px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: msgColor, textAlign: "center" }}>
-          {dotColor && <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: dotColor, marginRight: 7 }} />}
-          {hud.msg}
-        </div>
-
         {/* Right scenario panel */}
         <div className="desktop-side-panel" style={{ position: "absolute", top: 12, right: 12, width: 270, display: "flex", flexDirection: "column", gap: 9 }}>
           <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden" }}>
@@ -2397,18 +2383,44 @@ export default function SupplyChainSim() {
 
           <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5 }}>
             <div onClick={() => setPanelOpen((o) => !o)} style={{ padding: "8px 10px", background: C.panel2, cursor: "pointer", display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
-              <span>LIVE STATUS</span><span>{panelOpen ? "−" : "+"}</span>
+              <span>PROCESS CHRONOLOGY</span><span>{panelOpen ? "−" : "+"}</span>
             </div>
-            {panelOpen && <div style={{ padding: "6px 10px 10px" }}>
-              {stat("Trucks docked", `${hud.docked} / 2`, hud.docked === 2 ? C.green : C.text)}
-              {stat("Boxes unloaded", `${hud.unloaded} / 4`)}
-              {stat("Units stored", `${hud.stored} / 4`)}
-              {stat("Orders picked", `${hud.picked} / 3`, hud.picked === 3 ? C.green : C.dim)}
-              {stat("Packages packed", `${hud.packed} / 7`)}
-              {stat("Final labels", `${hud.labelled} / 7`, hud.labelled === 7 ? C.green : C.text)}
-              {stat("In correction", hud.inFix, hud.inFix ? C.red : C.dim)}
-              {stat("Shipped", `${hud.shipped} / 7`, hud.shipped ? C.green : C.dim)}
-              {stat("OTS · On-Time Shipping", hud.ots, hud.shipped === 7 ? C.green : C.yellow)}
+            {panelOpen && <div style={{ padding: "8px 9px 10px", maxHeight: 310, overflowY: "auto" }}>
+              <div style={{ fontSize: 9, color: C.dim, lineHeight: 1.45, marginBottom: 8 }}>
+                Chronological process log · latest event highlighted
+              </div>
+              <div style={{ display: "grid", gap: 5 }}>
+                {chronology.map((entry, index) => {
+                  const color = logColor(entry.eventKind);
+                  return (
+                    <div
+                      key={`${entry.eventT}-${index}-${entry.text}`}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "42px 8px minmax(0,1fr)",
+                        gap: 7,
+                        alignItems: "start",
+                        padding: "6px 6px",
+                        borderRadius: 7,
+                        border: `1px solid ${entry.isLatest ? color : C.line}`,
+                        background: entry.isLatest ? `${color}14` : "rgba(13,18,25,0.45)",
+                      }}
+                    >
+                      <span style={{ color: entry.isLatest ? C.text : C.dim, fontWeight: entry.isLatest ? 700 : 400 }}>
+                        {entry.clock}
+                      </span>
+                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, marginTop: 3, boxShadow: entry.isLatest ? `0 0 8px ${color}` : "none" }} />
+                      <span style={{ color: entry.isLatest ? C.text : C.dim, lineHeight: 1.35 }}>
+                        {entry.text}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ marginTop: 8, paddingTop: 7, borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ color: C.orange }}>Sort → storage · Ø 2.5 h</span>
+                <span style={{ color: C.yellow }}>OTS cutoff · 18:00</span>
+              </div>
             </div>}
           </div>
 
@@ -2471,19 +2483,7 @@ export default function SupplyChainSim() {
         <div style={{ display: "flex", gap: 3 }}>
           {[0.5, 1, 2, 4].map((v) => <button key={v} style={smallBtn(speed === v)} onClick={() => setSpd(v)}>{v}x</button>)}
         </div>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 0, minWidth: 280 }}>
-          {processSteps.map((step, index) => {
-            const active = index === activeProcessIndex;
-            const completed = index < activeProcessIndex;
-            return <React.Fragment key={step}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 64 }}>
-                <div style={{ width: active ? 12 : 9, height: active ? 12 : 9, borderRadius: "50%", background: active ? C.green : completed ? C.blue : C.line, boxShadow: active ? `0 0 12px ${C.green}` : "none" }} />
-                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, color: active ? C.green : completed ? C.text : C.dim, marginTop: 3, whiteSpace: "nowrap" }}>{step}</span>
-              </div>
-              {index < processSteps.length - 1 && <div style={{ flex: 1, height: 2, background: index < activeProcessIndex ? C.blue : C.line, minWidth: 12 }} />}
-            </React.Fragment>;
-          })}
-        </div>
+        <div style={{ flex: 1 }} />
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: C.dim, textAlign: "right", whiteSpace: "nowrap" }}>
           <div style={{ color: C.orange }}>SORT → STORAGE · Ø 2.5 h</div>
           <div>{hud.clock}</div>
