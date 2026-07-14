@@ -2514,16 +2514,9 @@ export default function SupplyChainSim() {
             <span style={{ color: C.text }}> · {SCENARIOS[scenario].short}</span>
           </div>
           <button style={{ ...btn(false), borderColor: C.line, color: C.dim }} onClick={() => { doPause(); setShowLanding(true); }}>⌂ Home</button>
-          <select
-            value={startPoint}
-            onChange={(e) => chooseStartPoint(e.target.value)}
-            aria-label="Simulation start point"
-            style={{ ...btn(false), appearance: "none", paddingRight: 30, background: C.panel2, color: C.text }}
-          >
-            <option value="packing">Start at Packing</option>
-            <option value="inbound">Start at Inbound</option>
-          </select>
-          <button style={{ ...btn(true), minWidth: 138 }} onClick={startSelected}>▶ Start Simulation</button>
+          <div style={{ padding: "6px 9px", border: `1px solid ${C.line}`, borderRadius: 8, background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: C.dim }}>
+            Select a dedicated start action in the right-hand panels
+          </div>
         </div>
       </div>
 
@@ -2544,6 +2537,14 @@ export default function SupplyChainSim() {
                 {/* Compact scenario and scope panel */}
         <div className="desktop-side-panel" style={{ position: "absolute", top: 12, right: 12, width: 260, display: "flex", flexDirection: "column", gap: 9 }}>
           <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 10px 30px rgba(0,0,0,.22)" }}>
+            <div style={{ padding: 9, borderBottom: `1px solid ${C.line}`, background: "rgba(61,220,132,0.06)" }}>
+              <button
+                onClick={startPacking}
+                style={{ ...btn(true), width: "100%", borderColor: C.green, background: C.green, color: C.bg, padding: "10px 12px" }}
+              >
+                ▶ Start Pack Simulation
+              </button>
+            </div>
             <div style={{ padding: "9px 11px", background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>LABEL PROCESS</div>
             <div style={{ padding: 9, borderBottom: `1px solid ${C.line}` }}>
               <div style={{ color: C.blue, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 800, letterSpacing: 1.1, marginBottom: 7 }}>CURRENT STATE</div>
@@ -2568,6 +2569,14 @@ export default function SupplyChainSim() {
           </div>
 
           <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 10px 30px rgba(0,0,0,.18)" }}>
+            <div style={{ padding: 9, borderBottom: `1px solid ${C.line}`, background: "rgba(77,163,255,0.06)" }}>
+              <button
+                onClick={startInbound}
+                style={{ ...btn(false), width: "100%", borderColor: C.blue, color: C.blue, padding: "10px 12px", background: "rgba(77,163,255,0.10)" }}
+              >
+                ▶ Start Inbound Simulation
+              </button>
+            </div>
             <div style={{ padding: "9px 11px", background: C.panel2, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>MODEL VIEW</div>
             <div style={{ padding: 8, display: "grid", gap: 6 }}>
               <button style={smallBtn(!scopeOpen && !showIn && showOut && !showLink && !showShipping)} onClick={showPackingOnly}>Packing Focus</button>
@@ -2583,9 +2592,9 @@ export default function SupplyChainSim() {
           </div>
         </div>
 
-        {/* Floating playback */}
+        {/* Compact in-scene playback: resume or pause only; dedicated starts live in the right-hand panels */}
         <div style={{ position: "absolute", bottom: 58, right: 300, display: "flex", gap: 8, zIndex: 5 }}>
-          <button onClick={playing ? doPause : startSelected} style={{ width: 50, height: 50, borderRadius: "50%", border: `2px solid ${playing ? C.orange : C.green}`, background: "rgba(20,27,37,0.95)", color: playing ? C.orange : C.green, fontSize: 18, cursor: "pointer" }} aria-label={playing ? "Pause" : `Start at ${startPoint === "inbound" ? "Inbound" : "Packing"}`}>{playing ? "❚❚" : "▶"}</button>
+          <button onClick={playing ? doPause : doPlay} style={{ width: 50, height: 50, borderRadius: "50%", border: `2px solid ${playing ? C.orange : C.green}`, background: "rgba(20,27,37,0.95)", color: playing ? C.orange : C.green, fontSize: 18, cursor: "pointer" }} aria-label={playing ? "Pause" : "Continue"}>{playing ? "❚❚" : "▶"}</button>
           <button onClick={doReset} style={{ width: 40, height: 40, alignSelf: "flex-end", borderRadius: "50%", border: `2px solid ${C.line}`, background: "rgba(20,27,37,0.95)", color: C.dim, fontSize: 15, cursor: "pointer" }} aria-label="Reset">↺</button>
         </div>
 
@@ -2605,9 +2614,9 @@ export default function SupplyChainSim() {
       </div>
 
       {/* Playback controls and express next-day timeline */}
-      <div style={{ padding: "7px 12px calc(8px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, background: C.panel, display: "grid", gridTemplateColumns: "minmax(260px, auto) auto auto minmax(300px, 1fr)", gap: 12, alignItems: "center", minHeight: 78 }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, letterSpacing: 1.2, color: C.dim, marginBottom: 5 }}>CAMERA VIEWS</div>
+      <div style={{ padding: "7px 12px calc(8px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, background: C.panel, display: "grid", gridTemplateColumns: "minmax(290px, auto) auto auto minmax(300px, 1fr)", gap: 14, alignItems: "stretch", minHeight: 84 }}>
+        <div style={{ minWidth: 0, padding: "8px 11px", border: `1px solid ${C.line}`, borderRadius: 10, background: "rgba(13,18,25,0.62)", boxShadow: "inset -1px 0 0 rgba(255,255,255,0.03)" }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, letterSpacing: 1.2, color: C.blue, marginBottom: 6, fontWeight: 800 }}>CAMERA VIEWS</div>
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
             {availableCameraViews.map((v) => (
               <button key={v} style={{ ...smallBtn(false), padding: "5px 8px", fontSize: 9.5 }} onClick={() => setView(v)}>
@@ -2616,7 +2625,7 @@ export default function SupplyChainSim() {
             ))}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 5, alignItems: "center", paddingLeft: 14, borderLeft: `2px solid ${C.line}` }}>
           {playing ? <button style={btn(false)} onClick={doPause}>❚❚ Pause</button> : <button style={btn(false)} onClick={doPlay}>▶ Continue</button>}
           <button style={smallBtn(false)} onClick={doReset}>↺ Reset</button>
           <button style={smallBtn(false)} onClick={doStep}>⇥ Step</button>
