@@ -777,6 +777,7 @@ export default function SupplyChainSim() {
   const [showShipping, setShowShipping] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [startPoint, setStartPoint] = useState("packing");
+  const startPointRef = useRef("packing");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
   const [showLanding, setShowLanding] = useState(true);
@@ -807,7 +808,7 @@ export default function SupplyChainSim() {
 
     const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 300);
     const fitRadius = () => 58 * Math.max(1, 1.7 / (mount.clientWidth / Math.max(1, mount.clientHeight)));
-    const cam = { theta: -0.85, phi: 1.0, radius: fitRadius(), target: new THREE.Vector3(-3, 0.5, 8) };
+    const cam = { theta: -0.75, phi: 1.0, radius: 16, target: new THREE.Vector3(-3.5, 1, 3.2) };
     const applyCam = () => {
       const sp = Math.sin(cam.phi), cp = Math.cos(cam.phi);
       camera.position.set(
@@ -825,7 +826,7 @@ export default function SupplyChainSim() {
       "Sorting": { target: [-8.5, 1.3, 15.5], theta: -0.95, phi: 1.0, radius: 15 },
       "Storage & Picking": { target: [6.3, 1.3, 12], theta: -0.9, phi: 0.95, radius: 15 },
       "Items to be packed": { target: [-10.5, 1.2, 2], theta: -0.9, phi: 1.0, radius: 15 },
-      "Packing Stations": { target: [-3.5, 1, 3.2], theta: -0.75, phi: 1.0, radius: 21 },
+      "Packing Stations": { target: [-3.5, 1, 3.2], theta: -0.75, phi: 1.0, radius: 16 },
       "Label Check": { target: [MACHINE_X, 1.5, 0], theta: -1.2, phi: 1.0, radius: 11 },
       Shipping: { target: [CONV_END - 3, 1, 0], theta: -0.7, phi: 0.95, radius: 13 },
     };
@@ -2329,6 +2330,7 @@ export default function SupplyChainSim() {
     setPlaying(false);
     setScenario(nextScenario);
     setHud({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: `S${nextScenario}: ${SCENARIOS[nextScenario].title} selected — choose a start mode`, msgKind: "info", done: false });
+    window.setTimeout(() => world.current.setManualView?.("Packing Stations"), 0);
   };
   const setSpd = (v) => { simRef.current.speed = v; setSpeed(v); };
   const applyScope = ({ inbound = showIn, outbound = showOut, link = showLink, shipping = showShipping }) => {
@@ -2340,13 +2342,13 @@ export default function SupplyChainSim() {
   const showFullChain = () => { setScopeOpen(false); applyScope({ inbound: true, outbound: true, link: true, shipping: true }); };
   const showCustomScope = () => setScopeOpen(true);
   const startSelected = () => {
-    if (startPoint === "inbound") {
-      showFullChain();
-      startInbound();
-    } else {
-      showPackingOnly();
-      startPacking();
-    }
+    const selectedStart = startPointRef.current;
+    if (selectedStart === "inbound") startInbound();
+    else startPacking();
+  };
+  const chooseStartPoint = (value) => {
+    startPointRef.current = value;
+    setStartPoint(value);
   };
   const toggleIn = () => applyScope({ inbound: !showIn });
   const toggleOut = () => applyScope({ outbound: !showOut });
@@ -2437,15 +2439,11 @@ export default function SupplyChainSim() {
   const storageCutoffProgress = ((14 * 60 - dayStartMinutes) / (dayEndMinutes - dayStartMinutes)) * 100;
 
   const openExperience = (type) => {
+    chooseStartPoint("packing");
     setShowLanding(false);
-    if (type === "current") {
-      changeScenario(1);
-      showPackingOnly();
-      window.setTimeout(startPacking, 0);
-    } else {
-      changeScenario(2);
-      showPackingOnly();
-    }
+    if (type === "current") changeScenario(1);
+    else changeScenario(2);
+    showPackingOnly();
   };
 
   if (showLanding) {
@@ -2518,7 +2516,7 @@ export default function SupplyChainSim() {
           <button style={{ ...btn(false), borderColor: C.line, color: C.dim }} onClick={() => { doPause(); setShowLanding(true); }}>⌂ Home</button>
           <select
             value={startPoint}
-            onChange={(e) => setStartPoint(e.target.value)}
+            onChange={(e) => chooseStartPoint(e.target.value)}
             aria-label="Simulation start point"
             style={{ ...btn(false), appearance: "none", paddingRight: 30, background: C.panel2, color: C.text }}
           >
@@ -2585,21 +2583,9 @@ export default function SupplyChainSim() {
           </div>
         </div>
 
-        {/* Camera views */}
-        <div style={{ position: "absolute", bottom: 54, left: 12, maxWidth: "calc(100% - 330px)", background: "rgba(13,18,25,0.90)", border: `1px solid ${C.line}`, borderRadius: 10, padding: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.22)" }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, letterSpacing: 1.2, color: C.dim, marginBottom: 6 }}>CAMERA</div>
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-            {availableCameraViews.map((v) => (
-              <button key={v} style={{ ...smallBtn(false), background: "rgba(26,35,49,0.86)", padding: "5px 8px", fontSize: 10 }} onClick={() => setView(v)}>
-                {v === "Full Chain" ? "Overview" : v}
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Floating playback */}
         <div style={{ position: "absolute", bottom: 58, right: 300, display: "flex", gap: 8, zIndex: 5 }}>
-          <button onClick={playing ? doPause : startPacking} style={{ width: 50, height: 50, borderRadius: "50%", border: `2px solid ${playing ? C.orange : C.green}`, background: "rgba(20,27,37,0.95)", color: playing ? C.orange : C.green, fontSize: 18, cursor: "pointer" }} aria-label={playing ? "Pause" : "Start with Packing"}>{playing ? "❚❚" : "▶"}</button>
+          <button onClick={playing ? doPause : startSelected} style={{ width: 50, height: 50, borderRadius: "50%", border: `2px solid ${playing ? C.orange : C.green}`, background: "rgba(20,27,37,0.95)", color: playing ? C.orange : C.green, fontSize: 18, cursor: "pointer" }} aria-label={playing ? "Pause" : `Start at ${startPoint === "inbound" ? "Inbound" : "Packing"}`}>{playing ? "❚❚" : "▶"}</button>
           <button onClick={doReset} style={{ width: 40, height: 40, alignSelf: "flex-end", borderRadius: "50%", border: `2px solid ${C.line}`, background: "rgba(20,27,37,0.95)", color: C.dim, fontSize: 15, cursor: "pointer" }} aria-label="Reset">↺</button>
         </div>
 
@@ -2619,7 +2605,17 @@ export default function SupplyChainSim() {
       </div>
 
       {/* Playback controls and express next-day timeline */}
-      <div style={{ padding: "7px 12px calc(8px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, background: C.panel, display: "grid", gridTemplateColumns: "auto auto minmax(300px, 1fr)", gap: 12, alignItems: "center", minHeight: 78 }}>
+      <div style={{ padding: "7px 12px calc(8px + env(safe-area-inset-bottom))", borderTop: `1px solid ${C.line}`, background: C.panel, display: "grid", gridTemplateColumns: "minmax(260px, auto) auto auto minmax(300px, 1fr)", gap: 12, alignItems: "center", minHeight: 78 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, letterSpacing: 1.2, color: C.dim, marginBottom: 5 }}>CAMERA VIEWS</div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {availableCameraViews.map((v) => (
+              <button key={v} style={{ ...smallBtn(false), padding: "5px 8px", fontSize: 9.5 }} onClick={() => setView(v)}>
+                {v === "Full Chain" ? "Overview" : v}
+              </button>
+            ))}
+          </div>
+        </div>
         <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
           {playing ? <button style={btn(false)} onClick={doPause}>❚❚ Pause</button> : <button style={btn(false)} onClick={doPlay}>▶ Continue</button>}
           <button style={smallBtn(false)} onClick={doReset}>↺ Reset</button>
