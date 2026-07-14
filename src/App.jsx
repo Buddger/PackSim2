@@ -2558,49 +2558,6 @@ export default function SupplyChainSim() {
             </div>
           </div>
 
-          <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5 }}>
-            <div onClick={() => setPanelOpen((o) => !o)} style={{ padding: "8px 10px", background: C.panel2, cursor: "pointer", display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
-              <span>PROCESS CHRONOLOGY</span><span>{panelOpen ? "−" : "+"}</span>
-            </div>
-            {panelOpen && <div style={{ padding: "8px 9px 10px", maxHeight: 310, overflowY: "auto" }}>
-              <div style={{ fontSize: 9, color: C.dim, lineHeight: 1.45, marginBottom: 8 }}>
-                Chronological process log · latest event highlighted
-              </div>
-              <div style={{ display: "grid", gap: 5 }}>
-                {chronology.map((entry, index) => {
-                  const color = logColor(entry.eventKind);
-                  return (
-                    <div
-                      key={`${entry.eventT}-${index}-${entry.text}`}
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "42px 8px minmax(0,1fr)",
-                        gap: 7,
-                        alignItems: "start",
-                        padding: "6px 6px",
-                        borderRadius: 7,
-                        border: `1px solid ${entry.isLatest ? color : C.line}`,
-                        background: entry.isLatest ? `${color}14` : "rgba(13,18,25,0.45)",
-                      }}
-                    >
-                      <span style={{ color: entry.isLatest ? C.text : C.dim, fontWeight: entry.isLatest ? 700 : 400 }}>
-                        {entry.clock}
-                      </span>
-                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, marginTop: 3, boxShadow: entry.isLatest ? `0 0 8px ${color}` : "none" }} />
-                      <span style={{ color: entry.isLatest ? C.text : C.dim, lineHeight: 1.35 }}>
-                        {entry.text}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ marginTop: 8, paddingTop: 7, borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "space-between", gap: 8 }}>
-                <span style={{ color: C.orange }}>Sort → storage · Ø 2.5 h</span>
-                <span style={{ color: C.yellow }}>OTS cutoff · 18:00</span>
-              </div>
-            </div>}
-          </div>
-
           <div style={{ background: "rgba(20,27,37,0.95)", border: `1px solid ${C.line}`, borderRadius: 11, overflow: "hidden", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10 }}>
             <div onClick={() => setScopeOpen((v) => !v)} style={{ padding: "8px 10px", background: C.panel2, cursor: "pointer", display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
               <span>MODEL SCOPE</span><span>{scopeOpen ? "−" : "+"}</span>
