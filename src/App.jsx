@@ -31,16 +31,17 @@ const CONV_START = -15.5;
 
 // Three packing stations: one station for each ORTEC package-count proposal
 const STATIONS = [
-  { id: "1P-01", x: -9.0, z: 3.2, cap: 1 },
-  { id: "2P-01", x: -3.5, z: 3.2, cap: 2 },
-  { id: "3P-01", x: 2.0, z: 3.2, cap: 3 },
+  // Left to right: highest parcel count furthest from the shipping gate.
+  { id: "6P-01", x: -9.0, z: 3.2, cap: 6 },
+  { id: "3P-01", x: -3.5, z: 3.2, cap: 3 },
+  { id: "1P-01", x: 2.0, z: 3.2, cap: 1 },
 ];
 
-// Clearly differentiated order colors and direct ORTEC station assignment
+// Orders are aligned with the physical station order: 6 parcels left, 1 parcel right.
 const ORDERS = [
-  { key: "A", count: 1, color: "#00c8ff", station: 0 },
-  { key: "B", count: 2, color: "#ffd166", station: 1 },
-  { key: "C", count: 3, color: "#e44cff", station: 2 },
+  { key: "C", count: 6, color: "#e44cff", station: 0 },
+  { key: "B", count: 3, color: "#ffd166", station: 1 },
+  { key: "A", count: 1, color: "#00c8ff", station: 2 },
 ];
 
 const SCENARIOS = {
@@ -348,7 +349,7 @@ function buildPackScenario(n) {
   const parcels = [];
   const messages = [];
   const scans = [];
-  let duration = 25;
+  let duration = 35;
   let keyMessage = "";
 
   const packPath = (st, spawn, end) => {
@@ -363,126 +364,107 @@ function buildPackScenario(n) {
       [tEnd, entryX(st), CONV_Y, 0],
     ];
   };
-  const base = (oi, idx, extra) => {
-    const O = ORDERS[oi];
-    return {
-      st: O.station,
-      order: O.key,
-      orderSize: O.count,
-      color: O.color,
-      id: `P-${O.key}-0${idx}`,
-      name: `${O.key}-${idx}`,
-      ...extra,
-    };
+  const parcelSize = (station, index) => {
+    const variants = [
+      [0.82, 0.62, 0.76], [1.02, 0.66, 0.82], [0.74, 0.56, 0.72],
+      [1.18, 0.82, 0.88], [0.9, 0.7, 0.8], [1.08, 0.58, 0.86],
+    ];
+    const size = variants[(station * 2 + index - 1) % variants.length];
+    return [...size];
   };
-  // parcel sizes per station
-  const SZ = {
-    A1: [0.9, 0.7, 0.8],
-    B1: [0.7, 0.55, 0.7], B2: [1.0, 0.6, 0.8],
-    C1: [0.75, 0.6, 0.75], C2: [0.95, 0.5, 0.8], C3: [1.25, 0.95, 0.9], C3s: [1.1, 0.85, 0.85], C4: [0.85, 0.65, 0.8],
-  };
-
-  const pushSimple = (d, labels) => {
-    const tEnter = d.move + 1.5;
+  const base = (order, idx, extra) => ({
+    st: order.station,
+    order: order.key,
+    orderSize: order.count,
+    color: order.color,
+    id: `P-${order.key}-${String(idx).padStart(2, "0")}`,
+    name: `${order.key}-${idx}`,
+    size: parcelSize(order.station, idx),
+    ...extra,
+  });
+  const pushDirect = (d, labels) => {
+    const tEnter = d.move + 1.25;
     const tExit = ride(tEnter, entryX(d.st), CONV_END);
     parcels.push({
       ...d,
       path: [...packPath(d.st, d.spawn, d.move), ...toConv(d.st, d.move, tEnter).slice(1), [tExit, CONV_END, CONV_Y, 0]],
       labels,
-      finalT: null, conveyor: [tEnter, tExit], loop: [], stagingIv: null,
+      finalT: null,
+      conveyor: [tEnter, tExit],
+      loop: [],
+      stagingIv: null,
+      relabelIv: null,
     });
     return { tEnter, tExit };
   };
 
+  // S1 — current state: every parcel leaves immediately with an open X count.
   if (n === 1) {
-    duration = 25;
-    keyMessage = "Fast package flow from all stations, but the final package count is unknown when the first labels are created.";
-    // Station A — order Order A, 1 parcel
-    const a1 = base(0, 1, { size: SZ.A1, spawn: 1, packEnd: 3.5, labelT: 3.7, seq: "1/X", move: 4.1 });
-    pushSimple(a1, [[a1.labelT, "1/X", C.orange, "count unknown"]]);
-    // Station B — order Order B, 2 packages
-    const b1 = base(1, 1, { size: SZ.B1, spawn: 0, packEnd: 2.5, labelT: 2.7, seq: "1/X", move: 3.1 });
-    const b2 = base(1, 2, { size: SZ.B2, spawn: 5, packEnd: 7.5, labelT: 7.7, seq: "2/X", move: 8.1 });
-    pushSimple(b1, [[b1.labelT, "1/X", C.orange, "count unknown"]]);
-    pushSimple(b2, [[b2.labelT, "2/X", C.orange, "count unknown"]]);
-    // Station C — order Order C, 3 packages
-    const c1 = base(2, 1, { size: SZ.C1, spawn: 0, packEnd: 3, labelT: 3.2, seq: "1/X", move: 3.6 });
-    const c2 = base(2, 2, { size: SZ.C2, spawn: 4, packEnd: 7, labelT: 7.3, seq: "2/X", move: 7.8 });
-    const c3 = base(2, 3, { size: SZ.C3, spawn: 8.5, packEnd: 11.5, labelT: 11.8, seq: "3/X", move: 12.3 });
-    pushSimple(c1, [[c1.labelT, "1/X", C.orange, "count unknown"]]);
-    pushSimple(c2, [[c2.labelT, "2/X", C.orange, "count unknown"]]);
-    pushSimple(c3, [[c3.labelT, "3/X", C.orange, "count unknown"]]);
-
-    messages.push([0, "3 stations packing in parallel: Order A (1 pc) · Order B (2 pcs) · Order C (3 pcs)"]);
-    messages.push([2.7, "Order B: label 1/X printed — final package count not yet known", "warn"]);
-    messages.push([3.7, "Order A: label 1/X — even the single-package order prints an open count", "warn"]);
-    messages.push([7.7, "Order B fully packed — but labels already left as 1/X · 2/X", "warn"]);
-    messages.push([11.8, "Order C: all packages packed — count known only now", "ok"]);
-    messages.push([13, "All orders packed: 6 packages released immediately, counts confirmed late", "ok"]);
+    duration = 39;
+    keyMessage = "Immediate parcel flow, but the final Handling Unit count is unknown when labels are printed.";
+    ORDERS.forEach((order, oi) => {
+      for (let i = 1; i <= order.count; i += 1) {
+        const spawn = (i - 1) * 3.1 + oi * 0.45;
+        const packEnd = spawn + 2.2;
+        const labelT = packEnd + 0.2;
+        const move = labelT + 0.35;
+        const d = base(order, i, { spawn, packEnd, labelT, move, seq: `${i}/X` });
+        pushDirect(d, [[labelT, `${i}/X`, C.orange, "final count unknown"]]);
+      }
+    });
+    messages.push([0, "Three dedicated stations pack 6-, 3- and 1-parcel orders in parallel", "info"]);
+    messages.push([2.4, "Labels are printed immediately with an open denominator: 1/X, 2/X, ...", "warn"]);
+    messages.push([18.5, "The 6-parcel order is complete only after earlier parcels have already left", "warn"]);
   }
 
+  // S2 — wait until the complete order is staged, then print final labels.
   if (n === 2) {
-    duration = 31;
-    keyMessage = "Correct final numbering for every order, but multi-package orders wait in the packing area — the more packages, the longer the wait.";
-    // Each packing station has its own staging table beside it.
-    // The tables are positioned away from the main outbound conveyor and
-    // away from the ORTEC infeed branches behind the stations.
-    const SLOTS = [
-      // 1-package station: one carton position
-      [{ x: -10.8, z: 2.0 }],
-      // 2-package station: two carton positions on one table
-      [{ x: -5.5, z: 1.8 }, { x: -5.5, z: 3.2 }],
-      // 3-package station: three carton positions on one table
-      [{ x: 0.0, z: 1.7 }, { x: 0.0, z: 3.0 }, { x: 0.0, z: 4.3 }],
-    ];
-    const pushStaged = (d, slot, finalLabel) => {
-      const s = slot;
-      const tEnter = d.release + 1.5;
-      const tExit = ride(tEnter, entryX(d.st), CONV_END);
-      parcels.push({
-        ...d,
-        path: [
-          ...packPath(d.st, d.spawn, d.packEnd + 0.2),
-          [d.stageIn, s.x, 0.80 + d.size[1] / 2, s.z],
-          [d.release, s.x, 0.80 + d.size[1] / 2, s.z],
-          [d.release + 0.7, (s.x + entryX(d.st)) / 2, CONV_Y + 0.6, 2.4],
-          [tEnter, entryX(d.st), CONV_Y, 0],
-          [tExit, CONV_END, CONV_Y, 0],
-        ],
-        labels: [[d.finalT, finalLabel, C.green, "final label"]],
-        conveyor: [tEnter, tExit], loop: [], stagingIv: [d.stageIn, d.release],
-      });
+    duration = 43;
+    keyMessage = "Correct final numbering for every order, but parcels wait at the packing station until the complete order is ready.";
+    const slotMap = {
+      0: Array.from({ length: 6 }, (_, i) => ({ x: -10.8 + (i % 2) * 1.25, z: 1.2 + Math.floor(i / 2) * 1.25 })),
+      1: Array.from({ length: 3 }, (_, i) => ({ x: -5.2, z: 1.6 + i * 1.3 })),
+      2: [{ x: 0.5, z: 2.2 }],
     };
-    // A — complete after one package: near-zero penalty
-    const a1 = base(0, 1, { size: SZ.A1, spawn: 0.5, packEnd: 3, stageIn: 4.2, finalT: 5.2, release: 6 });
-    pushStaged(a1, SLOTS[0][0], "1/1");
-    // B — first package waits for the second
-    const b1 = base(1, 1, { size: SZ.B1, spawn: 0, packEnd: 3, stageIn: 4.4, finalT: 9.8, release: 11.5 });
-    const b2 = base(1, 2, { size: SZ.B2, spawn: 4.5, packEnd: 7.5, stageIn: 8.9, finalT: 10.4, release: 12.2 });
-    pushStaged(b1, SLOTS[1][0], "1/2");
-    pushStaged(b2, SLOTS[1][1], "2/2");
-    // C — as before
-    const c1 = base(2, 1, { size: SZ.C1, spawn: 0, packEnd: 3, stageIn: 4.4, finalT: 13, release: 16 });
-    const c2 = base(2, 2, { size: SZ.C2, spawn: 4, packEnd: 7, stageIn: 8.4, finalT: 13.7, release: 16.8 });
-    const c3 = base(2, 3, { size: SZ.C3, spawn: 8, packEnd: 11, stageIn: 12.4, finalT: 14.4, release: 17.6 });
-    pushStaged(c1, SLOTS[2][0], "1/3");
-    pushStaged(c2, SLOTS[2][1], "2/3");
-    pushStaged(c3, SLOTS[2][2], "3/3");
-
-    messages.push([0, "3 stations packing — packages wait until the complete order is ready for labelling"]);
-    messages.push([4.2, "Order A staged — order already complete with 1 package", "info"]);
-    messages.push([5.2, "Order A: label 1/1 printed — near-zero waiting for single-package orders", "ok"]);
-    messages.push([4.4, "B-1 and C-1 wait without a final label until the order is complete", "warn"]);
-    messages.push([9.1, "Order B complete: 2 of 2 packed", "ok"]);
-    messages.push([9.8, "Order B: printing final labels 1/2 · 2/2, releasing together", "ok"]);
-    messages.push([12.5, "Order C complete: 3 of 3 packed", "ok"]);
-    messages.push([13, "Order C: printing final labels 1/3 · 2/3 · 3/3", "ok"]);
-    messages.push([16, "Order C released together — first package waited ~12s in staging", "warn"]);
+    ORDERS.forEach((order, oi) => {
+      const completion = (order.count - 1) * 3.1 + oi * 0.45 + 4.0;
+      for (let i = 1; i <= order.count; i += 1) {
+        const spawn = (i - 1) * 3.1 + oi * 0.45;
+        const packEnd = spawn + 2.2;
+        const stageIn = packEnd + 0.7;
+        const finalT = completion + i * 0.35;
+        const release = completion + 2.0 + i * 0.5;
+        const s = slotMap[order.station][i - 1];
+        const tEnter = release + 1.2;
+        const tExit = ride(tEnter, entryX(order.station), CONV_END);
+        const d = base(order, i, { spawn, packEnd, stageIn, finalT, release });
+        parcels.push({
+          ...d,
+          path: [
+            ...packPath(order.station, spawn, packEnd + 0.2),
+            [stageIn, s.x, 0.80 + d.size[1] / 2, s.z],
+            [release, s.x, 0.80 + d.size[1] / 2, s.z],
+            [release + 0.6, (s.x + entryX(order.station)) / 2, CONV_Y + 0.5, 2.2],
+            [tEnter, entryX(order.station), CONV_Y, 0],
+            [tExit, CONV_END, CONV_Y, 0],
+          ],
+          labels: [[finalT, `${i}/${order.count}`, C.green, "final label"]],
+          conveyor: [tEnter, tExit],
+          loop: [],
+          stagingIv: [stageIn, release],
+          relabelIv: null,
+        });
+      }
+      messages.push([completion, `Order ${order.key} complete: ${order.count} of ${order.count} parcels packed`, "ok"]);
+      messages.push([completion + 0.4, `Final labels 1/${order.count} to ${order.count}/${order.count} are printed`, "ok"]);
+    });
+    messages.push([0, "Parcels wait in dedicated 6-, 3- and 1-carton staging areas", "info"]);
   }
 
+  // S3 — interim labels and downstream final labelling with a waiting loop.
   if (n === 3) {
-    duration = 32;
-    keyMessage = "Immediate release from all stations with correct numbering downstream — but every incomplete order sends packages through the waiting loop.";
+    duration = 49;
+    keyMessage = "Parcels leave packing immediately with interim labels; final numbering is applied downstream once the order is complete.";
     const loopFrom = (t0) => [
       [t0, MACHINE_X, CONV_Y, 0],
       [t0 + 0.6, MACHINE_X + 1.5, CONV_Y, 0],
@@ -491,202 +473,153 @@ function buildPackScenario(n) {
       [t0 + 7.2, MACHINE_X - 6.5, CONV_Y, 0],
       [t0 + 9.8, MACHINE_X, CONV_Y, 0],
     ];
-    const mk = (d) => ({ ...d, tEnter: d.move + 1.5, tArr: ride(d.move + 1.5, entryX(d.st), MACHINE_X) });
-    const build = (d, seq, loops) => {
-      let path = [...packPath(d.st, d.spawn, d.move), ...toConv(d.st, d.move, d.tEnter).slice(1), [d.tArr, MACHINE_X, CONV_Y, 0]];
-      let t = d.tArr + 1.0;
-      path.push([t, MACHINE_X, CONV_Y, 0]);
-      const loopIv = [];
-      for (let i = 0; i < loops; i++) {
-        path = path.concat(loopFrom(t).slice(1));
-        loopIv.push([t, t + 9.8]);
-        t += 9.8;
-        path.push([t + 1.0, MACHINE_X, CONV_Y, 0]);
-        t += 1.0;
+    ORDERS.forEach((order, oi) => {
+      const completionBase = (order.count - 1) * 3.1 + oi * 0.45;
+      for (let i = 1; i <= order.count; i += 1) {
+        const spawn = (i - 1) * 3.1 + oi * 0.45;
+        const packEnd = spawn + 2.2;
+        const interimT = packEnd + 0.2;
+        const move = interimT + 0.35;
+        const tEnter = move + 1.25;
+        const tArr = ride(tEnter, entryX(order.station), MACHINE_X);
+        const mustLoop = i < order.count;
+        let path = [...packPath(order.station, spawn, move), ...toConv(order.station, move, tEnter).slice(1), [tArr, MACHINE_X, CONV_Y, 0]];
+        let finalT = tArr + 1;
+        const loop = [];
+        if (mustLoop) {
+          path = path.concat(loopFrom(finalT).slice(1));
+          loop.push([finalT, finalT + 9.8]);
+          finalT += 10.8;
+        }
+        const tExit = ride(finalT + 0.2, MACHINE_X, CONV_END);
+        path.push([tExit, CONV_END, CONV_Y, 0]);
+        const d = base(order, i, { spawn, packEnd, interimT, move, tEnter, tArr });
+        parcels.push({
+          ...d,
+          path,
+          seq: `${i}/${order.count}`,
+          finalT,
+          labels: [[interimT, "INTERIM", C.blue, d.id], [finalT, `${i}/${order.count}`, C.green, "final label"]],
+          conveyor: [tEnter, tExit],
+          loop,
+          stagingIv: null,
+          relabelIv: null,
+        });
+        scans.push(tArr, ...(mustLoop ? [finalT - 1] : []));
       }
-      const finalT = t;
-      const tExit = ride(t + 0.2, MACHINE_X, CONV_END);
-      path.push([tExit, CONV_END, CONV_Y, 0]);
-      return {
-        ...d, path, seq, finalT,
-        labels: [[d.interimT, "INTERIM", C.blue, d.id], [finalT, seq, C.green, "final label"]],
-        conveyor: [d.tEnter, tExit], loop: loopIv, stagingIv: null,
-      };
-    };
-    // A — single package: order complete at its own interim, no loop ever
-    const a1 = mk(base(0, 1, { size: SZ.A1, spawn: 2, packEnd: 4.5, interimT: 4.7, move: 5.1 }));
-    // B — first package loops once (second package packed late)
-    const b1 = mk(base(1, 1, { size: SZ.B1, spawn: 0, packEnd: 2.5, interimT: 2.7, move: 3.1 }));
-    const b2 = mk(base(1, 2, { size: SZ.B2, spawn: 8, packEnd: 10.5, interimT: 10.7, move: 11 }));
-    // C — packages 1 & 2 loop once, package 3 completes the order
-    const c1 = mk(base(2, 1, { size: SZ.C1, spawn: 0, packEnd: 3, interimT: 3.2, move: 3.6 }));
-    const c2 = mk(base(2, 2, { size: SZ.C2, spawn: 4, packEnd: 7, interimT: 7.2, move: 7.6 }));
-    const c3 = mk(base(2, 3, { size: SZ.C3, spawn: 8, packEnd: 11, interimT: 11.2, move: 11.6 }));
-
-    const pA = build(a1, "1/1", 0);
-    const pB1 = build(b1, "1/2", 1);
-    const pB2 = build(b2, "2/2", 0);
-    const pC1 = build(c1, "1/3", 1);
-    const pC2 = build(c2, "2/3", 1);
-    const pC3 = build(c3, "3/3", 0);
-    parcels.push(pA, pB1, pB2, pC1, pC2, pC3);
-
-    scans.push(c1.tArr, b1.tArr, c2.tArr, a1.tArr, c3.tArr, b2.tArr, pC1.finalT - 1, pB1.finalT - 1, pC2.finalT - 1);
-
-    messages.push([0, "3 stations packing — every package gets a temporary label and leaves immediately"]);
-    messages.push([c1.interimT, "C-1: temporary label — final pending", "info"]);
-    messages.push([c1.tArr, "Scan C-1: order 1 of 3 registered → loop", "warn"]);
-    messages.push([b1.tArr, "Scan B-1: order 1 of 2 registered → loop", "warn"]);
-    messages.push([c2.tArr, "Scan C-2: order 2 of 3 registered → loop", "warn"]);
-    messages.push([a1.tArr, "Scan A-1: single-package order complete → final 1/1, no loop", "ok"]);
-    messages.push([c3.interimT, "Order C complete: 3 of 3 registered", "ok"]);
-    messages.push([c3.tArr, "Scan C-3: order complete → final 3/3 applied", "ok"]);
-    messages.push([b2.tArr, "Scan B-2: order complete → final 2/2 applied", "ok"]);
-    messages.push([pC1.finalT, "C-1 back from loop → final 1/3", "ok"]);
-    messages.push([pB1.finalT, "B-1 back from loop → final 1/2", "ok"]);
-    messages.push([pC2.finalT, "C-2 back from loop → final 2/3", "ok"]);
+      messages.push([completionBase + 2.5, `Order ${order.key}: ${order.count}/${order.count} parcels registered — final labels available`, "ok"]);
+    });
+    messages.push([0, "All parcels receive interim labels and move immediately to the downstream scanner", "info"]);
+    messages.push([6, "Incomplete multi-parcel orders enter the waiting loop", "warn"]);
   }
 
+  // S4 — labels based on the ORTEC proposal; the 6-parcel order demonstrates one exception.
   if (n === 4) {
-    duration = 28;
-    keyMessage = "Ortec-predicted labels are instantly correct for well-modelled orders \u2014 only the mispredicted order needs detection, diversion, and relabelling.";
-    const DEV_T = 8.0; // deviation detected while packing C-3
+    duration = 48;
+    keyMessage = "ORTEC predicts 1, 3 or 6 Handling Units before packing; only exceptions require label correction.";
+    const DEV_T = 18.0;
     const relabelDetour = (tArr) => {
       const tScan = tArr + 1.0;
       const relabelT = tScan + 3.6;
       const secondScanT = tScan + 11.2;
       return {
         pts: [
-          // failed verification scan: divert from the main line
-          [tScan, MACHINE_X, CONV_Y, 0],
-          [tScan + 1.4, MACHINE_X, CONV_Y, 3.4],
-          [tScan + 2.6, MACHINE_X + 3, CONV_Y, 3.4],
-          [tScan + 4.8, MACHINE_X + 3, CONV_Y, 3.4],
-          // after clarification, use a return loop instead of bypassing the scanner
-          [tScan + 6.0, MACHINE_X + 6, CONV_Y, 3.4],
-          [tScan + 7.0, MACHINE_X + 6, CONV_Y, 5.0],
-          [tScan + 9.0, MACHINE_X - 2, CONV_Y, 5.0],
-          [tScan + 10.0, MACHINE_X - 2, CONV_Y, 0],
+          [tScan, MACHINE_X, CONV_Y, 0], [tScan + 1.4, MACHINE_X, CONV_Y, 3.4],
+          [tScan + 2.6, MACHINE_X + 3, CONV_Y, 3.4], [tScan + 4.8, MACHINE_X + 3, CONV_Y, 3.4],
+          [tScan + 6.0, MACHINE_X + 6, CONV_Y, 3.4], [tScan + 7.0, MACHINE_X + 6, CONV_Y, 5.0],
+          [tScan + 9.0, MACHINE_X - 2, CONV_Y, 5.0], [tScan + 10.0, MACHINE_X - 2, CONV_Y, 0],
           [secondScanT, MACHINE_X, CONV_Y, 0],
         ],
         relabelT,
         secondScanT,
-        rejoinT: secondScanT,
       };
     };
-    const mk = (d) => ({ ...d, tEnter: d.move + 1.5, tArr: ride(d.move + 1.5, entryX(d.st), MACHINE_X) });
-    const passThrough = (d, label, sub) => {
-      const tPass = d.tArr + 1.0;
-      const tExit = ride(tPass, MACHINE_X, CONV_END);
-      parcels.push({
-        ...d,
-        path: [
-          ...packPath(d.st, d.spawn, d.move), ...toConv(d.st, d.move, d.tEnter).slice(1),
-          [d.tArr, MACHINE_X, CONV_Y, 0], [tPass, MACHINE_X, CONV_Y, 0], [tExit, CONV_END, CONV_Y, 0],
-        ],
-        labels: [[d.labelT, label, C.green, sub]],
-        seq: label, finalT: d.labelT, plan: d.plan,
-        conveyor: [d.tEnter, tExit], loop: [], stagingIv: null, relabelIv: null,
-      });
+    const addPass = (order, i, predictedCount, actualCount = predictedCount, correction = false) => {
+      const spawn = (i - 1) * 3.1 + order.station * 0.45;
+      const packEnd = spawn + 2.2;
+      const labelT = packEnd + 0.2;
+      const move = labelT + 0.35;
+      const tEnter = move + 1.25;
+      const tArr = ride(tEnter, entryX(order.station), MACHINE_X);
+      const d = base(order, i, { spawn, packEnd, labelT, move, tEnter, tArr, plan: predictedCount });
+      if (!correction) {
+        const tPass = tArr + 1;
+        const tExit = ride(tPass, MACHINE_X, CONV_END);
+        parcels.push({
+          ...d,
+          path: [...packPath(order.station, spawn, move), ...toConv(order.station, move, tEnter).slice(1), [tArr, MACHINE_X, CONV_Y, 0], [tPass, MACHINE_X, CONV_Y, 0], [tExit, CONV_END, CONV_Y, 0]],
+          labels: [[labelT, `${i}/${actualCount}`, C.green, "ORTEC proposal"]],
+          seq: `${i}/${actualCount}`,
+          finalT: labelT,
+          conveyor: [tEnter, tExit], loop: [], stagingIv: null, relabelIv: null,
+        });
+        scans.push(tArr);
+      } else {
+        const det = relabelDetour(tArr);
+        const tExit = ride(det.secondScanT + 0.4, MACHINE_X, CONV_END);
+        parcels.push({
+          ...d,
+          path: [...packPath(order.station, spawn, move), ...toConv(order.station, move, tEnter).slice(1), [tArr, MACHINE_X, CONV_Y, 0], ...det.pts, [det.secondScanT + 0.4, MACHINE_X, CONV_Y, 0], [tExit, CONV_END, CONV_Y, 0]],
+          labels: [[labelT, `${i}/${predictedCount}`, C.green, "ORTEC proposal"], [DEV_T, `${i}/${predictedCount}`, C.red, "count deviation", true], [det.relabelT, `${i}/${actualCount}`, C.green, "relabelled"]],
+          seq: `${i}/${actualCount}`,
+          finalT: det.relabelT,
+          devT: DEV_T,
+          conveyor: [tEnter, tExit], loop: [], stagingIv: null, relabelIv: [det.pts[0][0], det.secondScanT],
+        });
+        scans.push(tArr, det.secondScanT);
+      }
     };
-    // A — proposal 1 package: correct
-    const a1 = mk(base(0, 1, { size: SZ.A1, spawn: 0, packEnd: 2.5, labelT: 2.7, move: 3.1, plan: 1 }));
-    passThrough(a1, "1/1", "Ortec proposal \u2713");
-    // B — proposal 2 packages: correct
-    const b1 = mk(base(1, 1, { size: SZ.B1, spawn: 0.5, packEnd: 3, labelT: 3.2, move: 3.6, plan: 2 }));
-    const b2 = mk(base(1, 2, { size: SZ.B2, spawn: 4.5, packEnd: 7, labelT: 7.2, move: 7.6, plan: 2 }));
-    passThrough(b1, "1/2", "Ortec proposal \u2713");
-    passThrough(b2, "2/2", "Ortec proposal \u2713");
-    // C — proposal 3 packages, actual 4: parcels 1 & 2 relabelled, 3 & 4 corrected at source
-    const c1 = mk(base(2, 1, { size: SZ.C1, spawn: 0, packEnd: 3, labelT: 3.2, move: 3.6, plan: 3 }));
-    const c2 = mk(base(2, 2, { size: SZ.C2, spawn: 3.2, packEnd: 6.2, labelT: 6.4, move: 6.8, plan: 3 }));
-    [c1, c2].forEach((d, i) => {
-      const det = relabelDetour(d.tArr);
-      const tExit = ride(det.secondScanT + 0.4, MACHINE_X, CONV_END);
-      parcels.push({
-        ...d,
-        path: [
-          ...packPath(d.st, d.spawn, d.move), ...toConv(d.st, d.move, d.tEnter).slice(1),
-          [d.tArr, MACHINE_X, CONV_Y, 0], ...det.pts,
-          [det.secondScanT + 0.4, MACHINE_X, CONV_Y, 0],
-          [tExit, CONV_END, CONV_Y, 0],
-        ],
-        labels: [
-          [d.labelT, `${i + 1}/3`, C.green, "Ortec proposal"],
-          [DEV_T, `${i + 1}/3`, C.red, "label incorrect", true],
-          [det.relabelT, `${i + 1}/4`, C.green, "relabelled"],
-        ],
-        seq: `${i + 1}/4`, finalT: det.relabelT, plan: 3,
-        conveyor: [d.tEnter, tExit], loop: [], stagingIv: null,
-        relabelIv: [det.pts[0][0], det.rejoinT],
-      });
-      messages.push([d.tArr, `Verify scan C-${i + 1}: label ${i + 1}/3 ≠ actual count 4 → label correction`, "err"]);
-      messages.push([det.relabelT, `C-${i + 1} relabelled ${i + 1}/4 — returning to the main conveyor`, "ok"]);
-      messages.push([det.secondScanT, `C-${i + 1} passes through the verification scanner again — corrected label accepted`, "ok"]);
-    });
-    const c3 = mk(base(2, 3, { size: SZ.C3s, spawn: 7.5, packEnd: 10.5, labelT: 10.7, move: 11.1, plan: 3 }));
-    const c4 = mk(base(2, 4, { size: SZ.C4, spawn: 11, packEnd: 13.5, labelT: 13.7, move: 14.1, plan: 3 }));
-    passThrough(c3, "3/4", "corrected count");
-    passThrough(c4, "4/4", "corrected count");
-    parcels.forEach((p) => { if (p.order === "C") p.devT = DEV_T; });
 
-    scans.push(c1.tArr, b1.tArr, a1.tArr, c2.tArr, b2.tArr, c3.tArr, c4.tArr);
+    // 1- and 3-parcel orders match the proposal exactly.
+    const one = ORDERS.find((o) => o.count === 1);
+    const three = ORDERS.find((o) => o.count === 3);
+    const six = ORDERS.find((o) => o.count === 6);
+    addPass(one, 1, 1);
+    for (let i = 1; i <= 3; i += 1) addPass(three, i, 3);
+    // Proposal is six; one late content deviation changes the actual count to seven.
+    for (let i = 1; i <= 6; i += 1) addPass(six, i, 6, 7, i <= 2);
+    addPass({ ...six, count: 7 }, 7, 6, 7, false);
 
-    messages.push([0, "Ortec packing proposal from master data: A\u21921 \u00b7 B\u21922 \u00b7 C\u21923 packages \u2014 final labels printed directly at pack", "info"]);
-    messages.push([2.7, "Order A: label 1/1 per Ortec proposal — released", "ok"]);
-    messages.push([3.2, "B-1 (1/2) and C-1 (1/3) labelled per proposal", "ok"]);
-    messages.push([DEV_T, "Deviation at Order C: contents exceed Ortec proposal → split, actual count = 4", "err"]);
-    messages.push([a1.tArr, "Verify scan A-1: label matches → passes", "ok"]);
-    messages.push([b2.tArr, "Verify scan B-2: label matches → passes", "ok"]);
-    messages.push([c3.labelT, "C-3 labelled 3/4 with corrected count", "ok"]);
-    messages.push([c3.tArr, "Verify scan C-3: label matches → passes", "ok"]);
-    messages.push([c4.labelT, "C-4 labelled 4/4 — order fully packed", "ok"]);
+    messages.push([0, "ORTEC proposal: Order A → 1 · Order B → 3 · Order C → 6 Handling Units", "info"]);
+    messages.push([3, "Orders with correct proposals receive final labels immediately at packing", "ok"]);
+    messages.push([DEV_T, "Exception on the 6-parcel proposal: actual count changes to 7 → correction loop", "err"]);
   }
 
-  // S1-S4: prepend ORTEC-routed infeed — picked items travel from ITEMS TO BE PACKED
-  // to the capacity-matched station before the selected packing scenario begins.
-  if (n >= 1) {
-    const OFF = 5;
-    parcels.forEach((p) => {
-      ["spawn", "packEnd", "move", "labelT", "interimT", "finalT", "stageIn", "release", "tEnter", "tArr", "devT"].forEach((k) => {
-        if (typeof p[k] === "number") p[k] += OFF;
-      });
-      p.path = p.path.map((w) => [w[0] + OFF, w[1], w[2], w[3]]);
-      p.labels = p.labels.map((L) => [L[0] + OFF, ...L.slice(1)]);
-      p.conveyor = [p.conveyor[0] + OFF, p.conveyor[1] + OFF];
-      p.loop = p.loop.map(([a, b]) => [a + OFF, b + OFF]);
-      if (p.stagingIv) p.stagingIv = [p.stagingIv[0] + OFF, p.stagingIv[1] + OFF];
-      if (p.relabelIv) p.relabelIv = [p.relabelIv[0] + OFF, p.relabelIv[1] + OFF];
+  // Prepend the ORTEC-routed infeed for every packing scenario.
+  const OFF = 5;
+  parcels.forEach((p) => {
+    ["spawn", "packEnd", "move", "labelT", "interimT", "finalT", "stageIn", "release", "tEnter", "tArr", "devT"].forEach((k) => {
+      if (typeof p[k] === "number") p[k] += OFF;
     });
-    for (let i = 0; i < messages.length; i++) messages[i] = [messages[i][0] + OFF, ...messages[i].slice(1)];
-    for (let i = 0; i < scans.length; i++) scans[i] += OFF;
-    duration += OFF;
+    p.path = p.path.map((w) => [w[0] + OFF, w[1], w[2], w[3]]);
+    p.labels = p.labels.map((L) => [L[0] + OFF, ...L.slice(1)]);
+    p.conveyor = [p.conveyor[0] + OFF, p.conveyor[1] + OFF];
+    p.loop = p.loop.map(([a, b]) => [a + OFF, b + OFF]);
+    if (p.stagingIv) p.stagingIv = [p.stagingIv[0] + OFF, p.stagingIv[1] + OFF];
+    if (p.relabelIv) p.relabelIv = [p.relabelIv[0] + OFF, p.relabelIv[1] + OFF];
+  });
+  for (let i = 0; i < messages.length; i += 1) messages[i] = [messages[i][0] + OFF, ...messages[i].slice(1)];
+  for (let i = 0; i < scans.length; i += 1) scans[i] += OFF;
+  duration += OFF;
 
-    const SPINE_Z = 7.6, SRC_X = 5.4, TS = 4;
-    ORDERS.forEach((O, oi) => {
-      const bx = STATIONS[O.station].x;
-      const dep = oi * 0.7;
-      const tSpine = dep + Math.abs(SRC_X - bx) / TS;
-      const tArr2 = tSpine + 1.0;
-      parcels.push({
-        tote: true, st: O.station, order: O.key, color: O.color, id: `TOTE-${O.key}`,
-        spawn: dep, despawn: tArr2 + 0.25, packEnd: -1, move: -1,
-        size: [1.05, 0.5, 0.75],
-        path: [
-          [dep, SRC_X, CONV_Y + 0.06, SPINE_Z],
-          [tSpine, bx, CONV_Y + 0.06, SPINE_Z],
-          [tArr2, bx, 1.0, 4.0],
-        ],
-        labels: [], conveyor: [1e9, 1e9], loop: [], stagingIv: null,
-      });
+  const SPINE_Z = 7.6, SRC_X = 5.4, TS = 4;
+  ORDERS.forEach((O, oi) => {
+    const bx = STATIONS[O.station].x;
+    const dep = oi * 0.7;
+    const tSpine = dep + Math.abs(SRC_X - bx) / TS;
+    const tArr2 = tSpine + 1.0;
+    parcels.push({
+      tote: true, st: O.station, order: O.key, color: O.color, id: `TOTE-${O.key}`,
+      spawn: dep, despawn: tArr2 + 0.25, packEnd: -1, move: -1,
+      size: [1.05, 0.5, 0.75],
+      path: [[dep, SRC_X, CONV_Y + 0.06, SPINE_Z], [tSpine, bx, CONV_Y + 0.06, SPINE_Z], [tArr2, bx, 1.0, 4.0]],
+      labels: [], conveyor: [1e9, 1e9], loop: [], stagingIv: null,
     });
-    messages.unshift([0, "Ortec proposal routes infeed: Order A \u2192 1-pc station \u00b7 Order B \u2192 2-pc station \u00b7 Order C \u2192 3-pc station", "info"]);
-  }
-
+  });
+  messages.unshift([0, "ORTEC routes orders to dedicated 6-, 3- and 1-parcel packing stations", "info"]);
   messages.sort((a, b) => a[0] - b[0]);
   return { n, duration, parcels, messages, scans, keyMessage };
 }
-
 
 // chain variant of the inbound flow (no cutoff drama, no own outbound leg)
 function buildInboundScenario() {
@@ -1331,7 +1264,7 @@ export default function SupplyChainSim() {
     }
 
     const routingSign = makeTextPlane(
-      "ORTEC ROUTING · A → 1 PACKAGE · B → 2 PACKAGES · C → 3 PACKAGES",
+      "ORTEC ROUTING · C → 6 PACKAGES · B → 3 PACKAGES · A → 1 PACKAGE",
       "#e8edf4",
       8.8,
       0.55
@@ -1347,27 +1280,31 @@ export default function SupplyChainSim() {
     const stagingTables = [
       {
         station: STATIONS[0],
-        label: "1-PACKAGE STAGING · 1 CARTON",
+        label: "6-PACKAGE STAGING · 6 CARTONS",
         color: ORDERS[0].color,
-        center: [-10.8, 2.0],
-        size: [1.7, 1.7],
-        slots: [[-10.8, 2.0]],
+        center: [-10.2, 2.5],
+        size: [3.1, 4.3],
+        slots: [
+          [-10.8, 1.2], [-9.55, 1.2],
+          [-10.8, 2.5], [-9.55, 2.5],
+          [-10.8, 3.8], [-9.55, 3.8],
+        ],
       },
       {
         station: STATIONS[1],
-        label: "2-PACKAGE STAGING · 2 CARTONS",
+        label: "3-PACKAGE STAGING · 3 CARTONS",
         color: ORDERS[1].color,
-        center: [-5.5, 2.5],
-        size: [1.7, 3.1],
-        slots: [[-5.5, 1.8], [-5.5, 3.2]],
+        center: [-5.2, 2.9],
+        size: [1.8, 4.0],
+        slots: [[-5.2, 1.6], [-5.2, 2.9], [-5.2, 4.2]],
       },
       {
         station: STATIONS[2],
-        label: "3-PACKAGE STAGING · 3 CARTONS",
+        label: "1-PACKAGE STAGING · 1 CARTON",
         color: ORDERS[2].color,
-        center: [0.0, 3.0],
-        size: [1.7, 4.5],
-        slots: [[0.0, 1.7], [0.0, 3.0], [0.0, 4.3]],
+        center: [0.5, 2.2],
+        size: [1.7, 1.7],
+        slots: [[0.5, 2.2]],
       },
     ];
 
@@ -1618,7 +1555,7 @@ export default function SupplyChainSim() {
 
 
     // Show the physical equipment required by the selected packing scenario.
-    // S1: direct labels with open package count (1/X, 2/X, 3/X)
+    // S1: direct labels with open package count (1/X through 6/X)
     // S2: packages wait on staging tables until the complete order is ready
     // S3: interim labels, downstream labelling machine and waiting loop
     // S4: predictive ORTEC labels, verification scan and correction spur
