@@ -421,10 +421,12 @@ function buildPackScenario(n) {
   if (n === 2) {
     duration = 43;
     keyMessage = "Correct final numbering for every order, but parcels wait at the packing station until the complete order is ready.";
+    // S2 layout: packing table (z 3.2) → packer (z 4.8) → staging table (z 6+).
+    // This keeps the operator physically between the printer/table and the waiting parcels.
     const slotMap = {
-      0: Array.from({ length: 6 }, (_, i) => ({ x: -10.8 + (i % 2) * 1.25, z: 1.2 + Math.floor(i / 2) * 1.25 })),
-      1: Array.from({ length: 3 }, (_, i) => ({ x: -5.2, z: 1.6 + i * 1.3 })),
-      2: [{ x: 0.5, z: 2.2 }],
+      0: Array.from({ length: 6 }, (_, i) => ({ x: -9.65 + (i % 2) * 1.25, z: 6.0 + Math.floor(i / 2) * 1.18 })),
+      1: Array.from({ length: 3 }, (_, i) => ({ x: -3.5, z: 6.0 + i * 1.18 })),
+      2: [{ x: 2.0, z: 6.6 }],
     };
     ORDERS.forEach((order, oi) => {
       const completion = (order.count - 1) * 3.1 + oi * 0.45 + 4.0;
@@ -1086,9 +1088,9 @@ export default function SupplyChainSim() {
     });
     // capacity group signs
     [
-      ["1-PACKAGE STATION", STATIONS[0].x],
-      ["2-PACKAGE STATION", STATIONS[1].x],
-      ["3-PACKAGE STATION", STATIONS[2].x],
+      ["6-PACKAGE STATION", STATIONS[0].x],
+      ["3-PACKAGE STATION", STATIONS[1].x],
+      ["1-PACKAGE STATION", STATIONS[2].x],
     ].forEach(([txt, sx]) => {
       const sign = makeTextPlane(txt, "#8fa0b5", 3.2, 0.45);
       sign.position.set(sx, 3.0, 3.2);
@@ -1282,29 +1284,29 @@ export default function SupplyChainSim() {
         station: STATIONS[0],
         label: "6-PACKAGE STAGING · 6 CARTONS",
         color: ORDERS[0].color,
-        center: [-10.2, 2.5],
-        size: [3.1, 4.3],
+        center: [-9.0, 7.18],
+        size: [3.1, 3.65],
         slots: [
-          [-10.8, 1.2], [-9.55, 1.2],
-          [-10.8, 2.5], [-9.55, 2.5],
-          [-10.8, 3.8], [-9.55, 3.8],
+          [-9.65, 6.0], [-8.4, 6.0],
+          [-9.65, 7.18], [-8.4, 7.18],
+          [-9.65, 8.36], [-8.4, 8.36],
         ],
       },
       {
         station: STATIONS[1],
         label: "3-PACKAGE STAGING · 3 CARTONS",
         color: ORDERS[1].color,
-        center: [-5.2, 2.9],
-        size: [1.8, 4.0],
-        slots: [[-5.2, 1.6], [-5.2, 2.9], [-5.2, 4.2]],
+        center: [-3.5, 7.18],
+        size: [1.8, 3.65],
+        slots: [[-3.5, 6.0], [-3.5, 7.18], [-3.5, 8.36]],
       },
       {
         station: STATIONS[2],
         label: "1-PACKAGE STAGING · 1 CARTON",
         color: ORDERS[2].color,
-        center: [0.5, 2.2],
+        center: [2.0, 6.6],
         size: [1.7, 1.7],
-        slots: [[0.5, 2.2]],
+        slots: [[2.0, 6.6]],
       },
     ];
 
