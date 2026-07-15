@@ -1645,7 +1645,6 @@ export default function SupplyChainSim() {
     machine.visible = scenario === 3 || scenario === 4 || scenario === 5;
     relabelGroup.visible = scenario === 5;
     ortecGroup.visible = scenario === 5;
-    rollCartInfoGroup.visible = true;
 
     // ================= PICKING LINK =================
     const linkBelt = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 5.0), new THREE.MeshStandardMaterial({ color: 0x2e4a3a, roughness: 0.9 }));
