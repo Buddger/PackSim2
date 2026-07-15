@@ -1036,6 +1036,7 @@ export default function SupplyChainSim() {
     const packers = [];
     const printerLights = [];
     const printerPapers = [];
+    const rollCartItems = [];
     STATIONS.forEach((st, si) => {
       const g = new THREE.Group();
       const isS2 = scenario === 2;
@@ -1058,9 +1059,10 @@ export default function SupplyChainSim() {
         g.add(leg);
       });
 
-      // roll cart in front of the station, between operator and shipping conveyor
-      const cartX = isS2 ? baseX - 0.1 : baseX;
-      const cartZ = 1.95;
+      // Roll cart on the viewer-facing side of the workstation.
+      // It stands in front of the packer, between the operator and the camera.
+      const cartX = isS2 ? packerX : baseX;
+      const cartZ = isS2 ? 7.15 : 6.55;
       const cartW = 1.25, cartD = 0.7, cartH = 1.95;
       const cartMat = mat(0x667382, 0.45, 0.38);
       const cartBody = new THREE.Group();
@@ -1080,18 +1082,28 @@ export default function SupplyChainSim() {
         wheel.position.set(cartX + dx, 0.08, cartZ + dz);
         cartBody.add(wheel);
       });
-      const itemCount = Math.min(6, ORDERS[si].count + 2);
+      // Multiple visible items represent the material required for the order.
+      // Their visibility is reduced progressively while parcels are packed.
+      const stationItems = [];
+      const itemCount = Math.max(4, Math.min(12, ORDERS[si].count * 2));
       for (let ii = 0; ii < itemCount; ii += 1) {
         const level = ii % 3;
-        const col = Math.floor(ii / 3);
+        const col = Math.floor(ii / 3) % 2;
+        const depthRow = Math.floor(ii / 6);
         const item = new THREE.Mesh(
           new THREE.BoxGeometry(0.34, 0.18, 0.22),
           new THREE.MeshStandardMaterial({ color: new THREE.Color(orderColor), roughness: 0.68, metalness: 0.06 })
         );
-        item.position.set(cartX + (col === 0 ? -0.18 : 0.18), 0.43 + level * 0.64, cartZ + (ii % 2 === 0 ? -0.12 : 0.12));
+        item.position.set(
+          cartX + (col === 0 ? -0.2 : 0.2),
+          0.43 + level * 0.64,
+          cartZ + (depthRow === 0 ? -0.13 : 0.13)
+        );
         item.castShadow = true;
         cartBody.add(item);
+        stationItems.push(item);
       }
+      rollCartItems.push(stationItems);
       const cartSign = makeTextPlane(`ITEM CART · ${ORDERS[si].count} PACKAGE FLOW`, orderColor, 3.2, 0.4);
       cartSign.position.set(cartX, 2.45, cartZ);
       g.add(cartBody, cartSign);
@@ -1247,7 +1259,7 @@ export default function SupplyChainSim() {
     const flowHint = makeTextPlane(
       scenario === 2
         ? "S2 LAYOUT · STAGING LEFT · PACKER CENTER · PACK TABLE RIGHT"
-        : "ITEMS ARE PROVIDED DIRECTLY AT EACH PACKING STATION",
+        : "ROLL CARTS STAND IN FRONT OF THE PACKERS · ITEMS ARE CONSUMED DURING PACKING",
       scenario === 2 ? C.blue : C.dim,
       6.6,
       0.42
@@ -1939,8 +1951,19 @@ export default function SupplyChainSim() {
       beltTexOut.offset.x -= dtReal * (S.playing ? S.speed : 0) * 1.6;
       // packer bob & printer flash per station
       packers.forEach((packer, si) => {
-        const anyPacking = dP.parcels.some((p) => p.st === si && t >= p.spawn && t < p.packEnd);
+        const stationParcels = dP.parcels.filter((p) => !p.tote && p.st === si);
+        const anyPacking = stationParcels.some((p) => t >= p.spawn && t < p.packEnd);
         packer.position.y = anyPacking ? Math.abs(Math.sin(now * 0.008)) * 0.08 : 0;
+
+        // Consume items from the roll cart as the station completes parcels.
+        const packedAtStation = stationParcels.filter((p) => t >= p.packEnd).length;
+        const totalAtStation = Math.max(1, stationParcels.length);
+        const items = rollCartItems[si] || [];
+        const remainingRatio = Math.max(0, 1 - packedAtStation / totalAtStation);
+        const visibleItems = Math.ceil(items.length * remainingRatio);
+        items.forEach((item, itemIndex) => {
+          item.visible = itemIndex < visibleItems;
+        });
       });
       printerPapers.forEach((paper, si) => {
         const stationLabelSoon = dP.parcels.some(
