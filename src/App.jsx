@@ -810,6 +810,7 @@ export default function SupplyChainSim() {
   const [scopeOpen, setScopeOpen] = useState(false);
   const [startPoint, setStartPoint] = useState("packing");
   const startPointRef = useRef("packing");
+  const lastStartModeRef = useRef("packing");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [guidedDemo, setGuidedDemo] = useState(false);
   const guidedTimersRef = useRef([]);
@@ -1210,9 +1211,7 @@ export default function SupplyChainSim() {
         stationItems.push(item);
       }
       rollCartItems.push(stationItems);
-      const cartSign = makeTextPlane(`ITEM CART · ${ORDERS[si].count} PACKAGE FLOW`, orderColor, 3.2, 0.4);
-      cartSign.position.set(cartX, 2.45, cartZ);
-      g.add(cartBody, cartSign);
+      g.add(cartBody);
 
       // packer figure
       const packer = new THREE.Group();
@@ -1439,7 +1438,7 @@ export default function SupplyChainSim() {
 
       cfg.slots.forEach(([sx, sz], slotIndex) => {
         const marker = new THREE.Mesh(
-          new THREE.PlaneGeometry(1.15, 1.05),
+          new THREE.PlaneGeometry(1.22, 1.12),
           new THREE.MeshBasicMaterial({
             color: new THREE.Color(cfg.color),
             transparent: true,
@@ -1452,7 +1451,7 @@ export default function SupplyChainSim() {
         group.add(marker);
 
         const border = new THREE.LineSegments(
-          new THREE.EdgesGeometry(new THREE.PlaneGeometry(1.15, 1.05)),
+          new THREE.EdgesGeometry(new THREE.PlaneGeometry(1.22, 1.12)),
           new THREE.LineBasicMaterial({ color: cfg.color })
         );
         border.rotation.x = -Math.PI / 2;
@@ -2185,6 +2184,13 @@ export default function SupplyChainSim() {
 
         // box tint by state
         const inStaging = pd.stagingIv && t >= pd.stagingIv[0] && t < pd.stagingIv[1];
+        // Keep all cartons fully inside the marked staging frames.
+        // The package geometries vary in size, so staged cartons are uniformly reduced.
+        if (!pd.tote && inStaging) {
+          pm.group.scale.setScalar(0.72);
+        } else if (!pd.tote && t >= pd.packEnd) {
+          pm.group.scale.setScalar(1);
+        }
         const latestLabel = li >= 0 ? pd.labels[li] : null;
         const labelWrong = !!(latestLabel && latestLabel[4]);
         const hasFinal = !!(latestLabel && latestLabel[1] !== "INTERIM" && !labelWrong);
@@ -2358,23 +2364,25 @@ export default function SupplyChainSim() {
 
   };
   const startInbound = () => {
+    lastStartModeRef.current = "inbound";
     showFullChain();
     world.current.setManualView?.("Full Chain");
     startAt(0, "Inbound started — trucks arrive at the receiving gates", "Full Chain");
   };
   const startPacking = () => {
+    lastStartModeRef.current = "packing";
     showPackingOnly();
     world.current.setManualView?.("Packing Stations");
     const packingStart = getImmediatePackingStart();
-    startAt(packingStart, `Packing started at the station supply carts — ${SCENARIOS[scenario].title}`, "Packing Stations");
+    startAt(packingStart, `Packing started — ${SCENARIOS[scenario].title}`, "Packing Stations");
   };
   const doPlay = () => { simRef.current.playing = true; setPlaying(true); };
   const doPause = () => { simRef.current.playing = false; setPlaying(false); };
   const doReset = () => {
-    const S = simRef.current;
-    S.t = 0; S.playing = false; S.rebuilt = true;
-    setPlaying(false);
-    setHud((h) => ({ ...h, t: 0, done: false }));
+    // Restart from the same entry point that was used previously.
+    // A packing simulation therefore refreshes directly back into packing.
+    if (lastStartModeRef.current === "inbound") startInbound();
+    else startPacking();
   };
   const doStep = () => {
     const S = simRef.current;
