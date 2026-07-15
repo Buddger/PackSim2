@@ -48,8 +48,8 @@ const SCENARIOS = {
   1: { title: "Label immediately · Current state", short: "Current state" },
   2: { title: "Wait, then label", short: "Wait, then label" },
   3: { title: "Temporary label, final label later", short: "Interim + final" },
-  4: { title: "Label based on ORTEC proposal", short: "ORTEC proposal" },
-  5: { title: "Hybrid staging + interim label", short: "Hybrid stage + interim" },
+  4: { title: "Hybrid staging + interim label", short: "Hybrid stage + interim" },
+  5: { title: "Label based on ORTEC proposal", short: "ORTEC proposal" },
 };
 const entryX = (st) => STATIONS[st].x + 1.5; // where the chute meets the conveyor
 
@@ -523,7 +523,7 @@ function buildPackScenario(n) {
   }
 
   // S4 — labels based on the ORTEC proposal; the 6-parcel order demonstrates one exception.
-  if (n === 4) {
+  if (n === 5) {
     duration = 48;
     keyMessage = "ORTEC predicts 1, 3 or 6 Handling Units before packing; only exceptions require label correction.";
     const DEV_T = 18.0;
@@ -596,13 +596,13 @@ function buildPackScenario(n) {
 
   // S5 — hybrid of S2 and S3: the 6-parcel station stages interim-labelled parcels,
   // then releases them together to the downstream labelling machine.
-  if (n === 5) {
+  if (n === 4) {
     duration = 53;
     keyMessage = "Interim labels are applied immediately. The 6-parcel order waits in a staging area and is released together to the downstream label machine once complete.";
     const stageSlots6 = [
-      { x: -11.45, z: 4.1 }, { x: -10.25, z: 4.1 },
-      { x: -11.45, z: 5.25 }, { x: -10.25, z: 5.25 },
-      { x: -11.45, z: 6.4 }, { x: -10.25, z: 6.4 },
+      { x: -11.75, z: 3.65 }, { x: -10.55, z: 3.65 },
+      { x: -11.75, z: 4.75 }, { x: -10.55, z: 4.75 },
+      { x: -11.75, z: 5.85 }, { x: -10.55, z: 5.85 },
     ];
     const loopFrom = (t0) => [
       [t0, MACHINE_X, CONV_Y, 0],
@@ -752,12 +752,14 @@ function shiftPack(pack, dt) {
   pack.duration += dt;
 }
 
-const PACK_OFF = 40;
+const PACK_OFF = 1.2;
+
+const CHAIN_PACK_OFF = 40;
 
 function buildChainData(packScenario = 4) {
   const inb = buildInboundScenario();
   const pack = buildPackScenario(packScenario);
-  shiftPack(pack, PACK_OFF);
+  shiftPack(pack, CHAIN_PACK_OFF);
 
   // picking link: orders A, B, C are picked from storage and supplied to the packing stations
   const linkActors = [];
@@ -1145,15 +1147,15 @@ export default function SupplyChainSim() {
     STATIONS.forEach((st, si) => {
       const g = new THREE.Group();
       const isS2 = scenario === 2;
-      const isS5 = scenario === 5;
+      const isHybrid = scenario === 4;
       const orderColor = ORDERS[si].color;
       const baseX = st.x;
-      const tableX = isS2 ? baseX + 0.55 : isS5 && si === 0 ? baseX + 0.55 : baseX;
+      const tableX = isS2 ? baseX + 0.55 : isHybrid && si === 0 ? baseX + 0.55 : baseX;
       const tableZ = st.z;
-      const packerX = isS2 ? baseX - 0.7 : isS5 && si === 0 ? baseX - 0.7 : baseX;
-      const packerZ = isS2 ? st.z + 1.55 : isS5 && si === 0 ? st.z + 1.55 : st.z + 1.6;
-      const printerX = isS2 ? tableX + 1.0 : isS5 && si === 0 ? tableX + 1.0 : st.x - 1.25;
-      const printerZ = isS2 ? st.z - 0.25 : isS5 && si === 0 ? st.z - 0.25 : st.z - 0.5;
+      const packerX = isS2 ? baseX - 0.7 : isHybrid && si === 0 ? baseX - 0.7 : baseX;
+      const packerZ = isS2 ? st.z + 1.55 : isHybrid && si === 0 ? st.z + 1.55 : st.z + 1.6;
+      const printerX = isS2 ? tableX + 1.0 : isHybrid && si === 0 ? tableX + 1.0 : st.x - 1.25;
+      const printerZ = isS2 ? st.z - 0.25 : isHybrid && si === 0 ? st.z - 0.25 : st.z - 0.5;
 
       // packing table
       const top = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.16, 2.0), mat(0x3a4657, 0.5, 0.3));
@@ -1167,8 +1169,8 @@ export default function SupplyChainSim() {
 
       // Roll cart on the viewer-facing side of the workstation.
       // It stands in front of the packer, between the operator and the camera.
-      const cartX = isS2 ? baseX - 0.05 : isS5 && si === 0 ? baseX - 0.05 : baseX;
-      const cartZ = isS2 ? 7.35 : isS5 && si === 0 ? 7.35 : 6.55;
+      const cartX = isS2 ? baseX - 0.05 : isHybrid && si === 0 ? baseX - 0.05 : baseX;
+      const cartZ = isS2 ? 7.35 : isHybrid && si === 0 ? 7.35 : 6.55;
       const cartW = 1.25, cartD = 0.7, cartH = 1.95;
       const cartMat = mat(0x667382, 0.45, 0.38);
       const cartBody = new THREE.Group();
@@ -1384,12 +1386,12 @@ export default function SupplyChainSim() {
         station: STATIONS[0],
         label: "6-PACKAGE STAGING · 6 CARTONS",
         color: ORDERS[0].color,
-        center: [-10.85, 5.25],
+        center: [-11.15, 4.75],
         size: [2.65, 3.95],
         slots: [
-          [-11.45, 4.1], [-10.25, 4.1],
-          [-11.45, 5.25], [-10.25, 5.25],
-          [-11.45, 6.4], [-10.25, 6.4],
+          [-11.75, 3.65], [-10.55, 3.65],
+          [-11.75, 4.75], [-10.55, 4.75],
+          [-11.75, 5.85], [-10.55, 5.85],
         ],
       },
       {
@@ -1664,14 +1666,14 @@ export default function SupplyChainSim() {
     // S2: packages wait on staging tables until the complete order is ready
     // S3: interim labels, downstream labelling machine and waiting loop
     // S4: predictive ORTEC labels, verification scan and correction spur
-    staging.visible = scenario === 2 || scenario === 5;
+    staging.visible = scenario === 2 || scenario === 4;
     stagingGroups.forEach((group, idx) => {
-      group.visible = scenario === 2 || (scenario === 5 && idx === 0);
+      group.visible = scenario === 2 || (scenario === 4 && idx === 0);
     });
-    loopGroup.visible = scenario === 3 || scenario === 5;
+    loopGroup.visible = scenario === 3 || scenario === 4;
     machine.visible = scenario === 3 || scenario === 4 || scenario === 5;
-    relabelGroup.visible = scenario === 4;
-    ortecGroup.visible = scenario === 4;
+    relabelGroup.visible = scenario === 5;
+    ortecGroup.visible = scenario === 5;
     rollCartInfoGroup.visible = true;
 
     // ================= PICKING LINK =================
@@ -2094,7 +2096,7 @@ export default function SupplyChainSim() {
       }
 
       // Ortec board state
-      if (dP.n === 4) {
+      if (dP.n === 5) {
         const devP = dP.parcels.find((p) => p.devT !== undefined);
         drawOrtec(devP ? t >= devP.devT : false);
       }
@@ -2235,7 +2237,7 @@ export default function SupplyChainSim() {
           });
           waitCount = dP.parcels.filter((p) => !p.tote).length;
         }
-        if (dP.n === 4) {
+        if (dP.n === 5) {
           if (pd.relabelIv && t >= pd.relabelIv[0]) {
             const w = Math.min(t, pd.relabelIv[1]) - pd.relabelIv[0];
             waitSum += w;
@@ -2479,8 +2481,8 @@ export default function SupplyChainSim() {
     1: "CURRENT STATE: Labels are printed immediately. The final package count is still unknown, so labels show 1/X, 2/X or 3/X.",
     2: "Packages wait in staging until the complete order is packed. Final labels are then applied together.",
     3: "Packages receive interim labels and move directly to the conveyor. Final labels are applied later, including a scanner loop when required.",
-    4: "Labels are created from the ORTEC packing proposal. Verification failures enter the correction loop and pass the scanner again.",
-    5: "Hybrid scenario: most parcels behave like S3, but the 6-HU station stages interim-labelled parcels until the order is complete and sends them together to the downstream label machine.",
+    4: "Hybrid scenario: most parcels behave like S3, but the 6-HU station stages interim-labelled parcels until the order is complete and sends them together to the downstream label machine.",
+    5: "Labels are created from the ORTEC packing proposal. Verification failures enter the correction loop and pass the scanner again.",
   };
 
   const scenarioObjectives = {
@@ -2507,17 +2509,17 @@ export default function SupplyChainSim() {
     },
     4: {
       eyebrow: "THEORETICAL SCENARIO",
-      title: "Label based on ORTEC proposal",
-      description: "The expected Handling Unit count is predicted before packing. Orders are routed to the appropriate station and labels can show the final HU sequence immediately.",
-      result: "Benefit: no staging, immediate labels and correction only when verification fails.",
-      accent: C.yellow,
-    },
-    5: {
-      eyebrow: "THEORETICAL SCENARIO",
       title: "Hybrid staging + interim label",
       description: "Most parcels flow like S3 with interim labels. Only the 6-HU station stages the finished parcels, waits until all six are packed, and then sends them together to the downstream label machine for the final labels.",
       result: "Benefit: controlled release for the 6-HU order while retaining interim-label flow for the other stations.",
       accent: C.orange,
+    },
+    5: {
+      eyebrow: "THEORETICAL SCENARIO",
+      title: "Label based on ORTEC proposal",
+      description: "The expected Handling Unit count is predicted before packing. Orders are routed to the appropriate station and labels can show the final HU sequence immediately.",
+      result: "Benefit: no staging, immediate labels and correction only when verification fails.",
+      accent: C.yellow,
     },
   };
 
