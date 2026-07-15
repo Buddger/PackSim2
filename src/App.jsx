@@ -421,12 +421,18 @@ function buildPackScenario(n) {
   if (n === 2) {
     duration = 43;
     keyMessage = "Correct final numbering for every order, but parcels wait at the packing station until the complete order is ready.";
-    // S2 layout: packing table (z 3.2) → packer (z 4.8) → staging table (z 6+).
-    // This keeps the operator physically between the printer/table and the waiting parcels.
+    // S2 layout: staging area left of the packer, packing table with label printer to the right,
+    // and a front roll cart between the operator and the shipping conveyor.
     const slotMap = {
-      0: Array.from({ length: 6 }, (_, i) => ({ x: -9.65 + (i % 2) * 1.25, z: 6.0 + Math.floor(i / 2) * 1.18 })),
-      1: Array.from({ length: 3 }, (_, i) => ({ x: -3.5, z: 6.0 + i * 1.18 })),
-      2: [{ x: 2.0, z: 6.6 }],
+      0: [
+        { x: -11.45, z: 4.1 }, { x: -10.25, z: 4.1 },
+        { x: -11.45, z: 5.25 }, { x: -10.25, z: 5.25 },
+        { x: -11.45, z: 6.4 }, { x: -10.25, z: 6.4 },
+      ],
+      1: [
+        { x: -5.65, z: 4.1 }, { x: -5.65, z: 5.25 }, { x: -5.65, z: 6.4 },
+      ],
+      2: [{ x: -0.2, z: 5.25 }],
     };
     ORDERS.forEach((order, oi) => {
       const completion = (order.count - 1) * 3.1 + oi * 0.45 + 4.0;
@@ -604,21 +610,7 @@ function buildPackScenario(n) {
   for (let i = 0; i < scans.length; i += 1) scans[i] += OFF;
   duration += OFF;
 
-  const SPINE_Z = 7.6, SRC_X = 5.4, TS = 4;
-  ORDERS.forEach((O, oi) => {
-    const bx = STATIONS[O.station].x;
-    const dep = oi * 0.7;
-    const tSpine = dep + Math.abs(SRC_X - bx) / TS;
-    const tArr2 = tSpine + 1.0;
-    parcels.push({
-      tote: true, st: O.station, order: O.key, color: O.color, id: `TOTE-${O.key}`,
-      spawn: dep, despawn: tArr2 + 0.25, packEnd: -1, move: -1,
-      size: [1.05, 0.5, 0.75],
-      path: [[dep, SRC_X, CONV_Y + 0.06, SPINE_Z], [tSpine, bx, CONV_Y + 0.06, SPINE_Z], [tArr2, bx, 1.0, 4.0]],
-      labels: [], conveyor: [1e9, 1e9], loop: [], stagingIv: null,
-    });
-  });
-  messages.unshift([0, "ORTEC routes orders to dedicated 6-, 3- and 1-parcel packing stations", "info"]);
+  messages.unshift([0, "Each packing station is supplied with a dedicated multi-level roll cart holding the required items", "info"]);
   messages.sort((a, b) => a[0] - b[0]);
   return { n, duration, parcels, messages, scans, keyMessage };
 }
@@ -662,7 +654,7 @@ function buildChainData(packScenario = 4) {
   const pack = buildPackScenario(packScenario);
   shiftPack(pack, PACK_OFF);
 
-  // picking link: orders A, B, C are picked from storage and travel to ITEMS TO BE PACKED
+  // picking link: orders A, B, C are picked from storage and supplied to the packing stations
   const linkActors = [];
   const pickTimes = [];
   ORDERS.forEach((O, i) => {
@@ -762,7 +754,7 @@ export default function SupplyChainSim() {
       "Inbound Docks": { target: [-20, 1, 16], theta: -0.6, phi: 1.0, radius: 18 },
       "Sorting": { target: [-8.5, 1.3, 15.5], theta: -0.95, phi: 1.0, radius: 15 },
       "Storage & Picking": { target: [6.3, 1.3, 12], theta: -0.9, phi: 0.95, radius: 15 },
-      "Items to be packed": { target: [-10.5, 1.2, 2], theta: -0.9, phi: 1.0, radius: 15 },
+      "Station Supply Carts": { target: [-10.5, 1.2, 2], theta: -0.9, phi: 1.0, radius: 15 },
       "Packing Stations": { target: [-3.5, 1, 3.2], theta: -0.75, phi: 1.0, radius: 16 },
       "Label Check": { target: [MACHINE_X, 1.5, 0], theta: -1.2, phi: 1.0, radius: 11 },
       Shipping: { target: [CONV_END - 3, 1, 0], theta: -0.7, phi: 0.95, radius: 13 },
@@ -1046,15 +1038,64 @@ export default function SupplyChainSim() {
     const printerPapers = [];
     STATIONS.forEach((st, si) => {
       const g = new THREE.Group();
-      // table
+      const isS2 = scenario === 2;
+      const orderColor = ORDERS[si].color;
+      const baseX = st.x;
+      const tableX = isS2 ? baseX + 0.55 : baseX;
+      const tableZ = st.z;
+      const packerX = isS2 ? baseX - 0.7 : baseX;
+      const packerZ = isS2 ? st.z + 1.55 : st.z + 1.6;
+      const printerX = isS2 ? tableX + 1.0 : st.x - 1.25;
+      const printerZ = isS2 ? st.z - 0.25 : st.z - 0.5;
+
+      // packing table
       const top = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.16, 2.0), mat(0x3a4657, 0.5, 0.3));
-      top.position.set(st.x, 1.0, st.z); top.castShadow = true;
+      top.position.set(tableX, 1.0, tableZ); top.castShadow = true;
       g.add(top);
       [[-0.8, -0.8], [0.8, -0.8], [-0.8, 0.8], [0.8, 0.8]].forEach(([dx, dz]) => {
         const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.0), mat(0x2a3441, 0.4, 0.5));
-        leg.position.set(st.x + dx, 0.5, st.z + dz);
+        leg.position.set(tableX + dx, 0.5, tableZ + dz);
         g.add(leg);
       });
+
+      // roll cart in front of the station, between operator and shipping conveyor
+      const cartX = isS2 ? baseX - 0.1 : baseX;
+      const cartZ = 1.95;
+      const cartW = 1.25, cartD = 0.7, cartH = 1.95;
+      const cartMat = mat(0x667382, 0.45, 0.38);
+      const cartBody = new THREE.Group();
+      [[-cartW / 2, -cartD / 2], [cartW / 2, -cartD / 2], [-cartW / 2, cartD / 2], [cartW / 2, cartD / 2]].forEach(([dx, dz]) => {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, cartH, 0.08), cartMat);
+        post.position.set(cartX + dx, cartH / 2, cartZ + dz);
+        cartBody.add(post);
+      });
+      [0.28, 0.92, 1.56].forEach((y) => {
+        const shelf = new THREE.Mesh(new THREE.BoxGeometry(cartW, 0.08, cartD), cartMat);
+        shelf.position.set(cartX, y, cartZ);
+        cartBody.add(shelf);
+      });
+      [[-0.45, -0.22], [0.45, -0.22], [-0.45, 0.22], [0.45, 0.22]].forEach(([dx, dz]) => {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.08, 14), mat(0x1d2732, 0.55, 0.3));
+        wheel.rotation.z = Math.PI / 2;
+        wheel.position.set(cartX + dx, 0.08, cartZ + dz);
+        cartBody.add(wheel);
+      });
+      const itemCount = Math.min(6, ORDERS[si].count + 2);
+      for (let ii = 0; ii < itemCount; ii += 1) {
+        const level = ii % 3;
+        const col = Math.floor(ii / 3);
+        const item = new THREE.Mesh(
+          new THREE.BoxGeometry(0.34, 0.18, 0.22),
+          new THREE.MeshStandardMaterial({ color: new THREE.Color(orderColor), roughness: 0.68, metalness: 0.06 })
+        );
+        item.position.set(cartX + (col === 0 ? -0.18 : 0.18), 0.43 + level * 0.64, cartZ + (ii % 2 === 0 ? -0.12 : 0.12));
+        item.castShadow = true;
+        cartBody.add(item);
+      }
+      const cartSign = makeTextPlane(`ITEM CART · ${ORDERS[si].count} PACKAGE FLOW`, orderColor, 3.2, 0.4);
+      cartSign.position.set(cartX, 2.45, cartZ);
+      g.add(cartBody, cartSign);
+
       // packer figure
       const packer = new THREE.Group();
       const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.9, 12), mat(0x4a5f78, 0.8));
@@ -1066,20 +1107,21 @@ export default function SupplyChainSim() {
       const legs = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.24, 0.7, 10), mat(0x22303f, 0.9));
       legs.position.y = 0.45;
       packer.add(body, head, helmet, legs);
-      packer.position.set(st.x, 0, st.z + 1.6);
+      packer.position.set(packerX, 0, packerZ);
       g.add(packer);
       packers.push(packer);
+
       // printer
       const pBody = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.6), mat(0x222b38, 0.5, 0.4));
-      pBody.position.set(st.x - 1.25, 1.33, st.z - 0.5); pBody.castShadow = true;
+      pBody.position.set(printerX, 1.33, printerZ); pBody.castShadow = true;
       const pSlot = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.06, 0.1), mat(0x0d1219, 0.4));
-      pSlot.position.set(st.x - 1.25, 1.4, st.z - 0.16);
+      pSlot.position.set(printerX, 1.4, printerZ + 0.18);
       const pLight = new THREE.Mesh(new THREE.SphereGeometry(0.05), new THREE.MeshBasicMaterial({ color: C.green }));
-      pLight.position.set(st.x - 1.01, 1.5, st.z - 0.2);
+      pLight.position.set(printerX + 0.23, 1.5, printerZ + 0.14);
       g.add(pBody, pSlot, pLight);
       printerLights.push(pLight);
       const paper = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.3), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
-      paper.position.set(st.x - 1.25, 1.28, st.z - 0.1);
+      paper.position.set(printerX, 1.28, printerZ + 0.25);
       paper.rotation.x = -0.4;
       paper.visible = false;
       g.add(paper);
@@ -1190,90 +1232,29 @@ export default function SupplyChainSim() {
     loadingBay.position.set(CONV_END + 1.65, 0.08, 0);
     shippingGroup.add(loadingBay);
 
-    // ORTEC-routed infeed conveyors for scenarios 2-4
-    const infeedGroup = new THREE.Group();
-    const spineMat = new THREE.MeshStandardMaterial({ color: 0x35424e, roughness: 0.9 });
-    const SPINE_Z = 7.6;
-    const SRC_X = 5.4;
-    const BRANCH_END_Z = 4.0;
-    const spineMinX = STATIONS[0].x - 1.5;
-    const spineMaxX = SRC_X + 1.2;
-    const spineLength = spineMaxX - spineMinX;
-
-    const spine = new THREE.Mesh(new THREE.BoxGeometry(spineLength, 0.12, 1.1), spineMat);
-    spine.position.set((spineMinX + spineMaxX) / 2, 0.62, SPINE_Z);
-    spine.castShadow = true;
-    infeedGroup.add(spine);
-
-    for (let x = spineMinX + 0.6; x <= spineMaxX - 0.6; x += 2.4) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.6, 0.9), mat(0x232c38, 0.5, 0.4));
-      leg.position.set(x, 0.3, SPINE_Z);
-      infeedGroup.add(leg);
-    }
-
-    const srcBox = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.5, 1.7), mat(0x2b3a4d, 0.6, 0.3));
-    srcBox.position.set(SRC_X + 1.0, 0.8, SPINE_Z);
-    srcBox.castShadow = true;
-    infeedGroup.add(srcBox);
-
-    const sourceSign = makeTextPlane("ITEMS TO BE PACKED", "#e8edf4", 3.8, 0.5);
-    sourceSign.position.set(SRC_X + 1.0, 2.0, SPINE_Z + 0.9);
-    infeedGroup.add(sourceSign);
-
-    STATIONS.forEach((st, si) => {
-      const order = ORDERS[si];
-      const branchLength = SPINE_Z - BRANCH_END_Z;
-      const branch = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, branchLength + 0.2), spineMat);
-      branch.position.set(st.x, 0.62, (SPINE_Z + BRANCH_END_Z) / 2);
-      branch.castShadow = true;
-      infeedGroup.add(branch);
-
-      const lamp = new THREE.Mesh(
-        new THREE.SphereGeometry(0.14),
-        new THREE.MeshBasicMaterial({ color: new THREE.Color(order.color) })
-      );
-      lamp.position.set(st.x + 0.65, 1.15, SPINE_Z - 0.15);
-      infeedGroup.add(lamp);
-
-      [6.8, 5.7, 4.6].forEach((az) => {
-        const arrow = new THREE.Mesh(
-          new THREE.ConeGeometry(0.14, 0.36, 4),
-          new THREE.MeshBasicMaterial({ color: new THREE.Color(order.color) })
-        );
-        arrow.position.set(st.x, 0.95, az);
-        arrow.rotation.x = -Math.PI / 2;
-        infeedGroup.add(arrow);
-      });
-
-      const routeSign = makeTextPlane(
-        `ORDER ${order.key} · ORTEC ${order.count} → ${st.id}`,
-        order.color,
-        3.8,
-        0.42
-      );
-      routeSign.position.set(st.x, 1.75, BRANCH_END_Z + 0.18);
-      infeedGroup.add(routeSign);
-    });
-
-    for (let x = SRC_X - 0.4; x >= spineMinX + 0.8; x -= 2.5) {
-      const arrow = new THREE.Mesh(
-        new THREE.ConeGeometry(0.14, 0.36, 4),
-        new THREE.MeshBasicMaterial({ color: 0x8fa0b5 })
-      );
-      arrow.position.set(x, 0.95, SPINE_Z);
-      arrow.rotation.z = Math.PI / 2;
-      infeedGroup.add(arrow);
-    }
-
-    const routingSign = makeTextPlane(
-      "ORTEC ROUTING · C → 6 PACKAGES · B → 3 PACKAGES · A → 1 PACKAGE",
+    // Station supply concept for all packing scenarios: each station has its own roll cart
+    // with several levels of items instead of a feeder belt from storage / items-to-be-packed.
+    const rollCartInfoGroup = new THREE.Group();
+    const supplySign = makeTextPlane(
+      "STATION SUPPLY · ITEMS ARRIVE ON MULTI-LEVEL ROLL CARTS",
       "#e8edf4",
-      8.8,
+      7.2,
       0.55
     );
-    routingSign.position.set(-2.2, 2.45, SPINE_Z + 0.9);
-    infeedGroup.add(routingSign);
-    propsOut.add(infeedGroup);
+    supplySign.position.set(-3.5, 4.2, 1.1);
+    rollCartInfoGroup.add(supplySign);
+
+    const flowHint = makeTextPlane(
+      scenario === 2
+        ? "S2 LAYOUT · STAGING LEFT · PACKER CENTER · PACK TABLE RIGHT"
+        : "ITEMS ARE PROVIDED DIRECTLY AT EACH PACKING STATION",
+      scenario === 2 ? C.blue : C.dim,
+      6.6,
+      0.42
+    );
+    flowHint.position.set(-3.5, 3.45, 1.15);
+    rollCartInfoGroup.add(flowHint);
+    propsOut.add(rollCartInfoGroup);
 
     // Waiting area (scenario 2) — one staging table beside each station.
     // No conveyor passes over or through these tables.
@@ -1284,29 +1265,29 @@ export default function SupplyChainSim() {
         station: STATIONS[0],
         label: "6-PACKAGE STAGING · 6 CARTONS",
         color: ORDERS[0].color,
-        center: [-9.0, 7.18],
-        size: [3.1, 3.65],
+        center: [-10.85, 5.25],
+        size: [2.65, 3.95],
         slots: [
-          [-9.65, 6.0], [-8.4, 6.0],
-          [-9.65, 7.18], [-8.4, 7.18],
-          [-9.65, 8.36], [-8.4, 8.36],
+          [-11.45, 4.1], [-10.25, 4.1],
+          [-11.45, 5.25], [-10.25, 5.25],
+          [-11.45, 6.4], [-10.25, 6.4],
         ],
       },
       {
         station: STATIONS[1],
         label: "3-PACKAGE STAGING · 3 CARTONS",
         color: ORDERS[1].color,
-        center: [-3.5, 7.18],
-        size: [1.8, 3.65],
-        slots: [[-3.5, 6.0], [-3.5, 7.18], [-3.5, 8.36]],
+        center: [-5.65, 5.25],
+        size: [1.8, 3.95],
+        slots: [[-5.65, 4.1], [-5.65, 5.25], [-5.65, 6.4]],
       },
       {
         station: STATIONS[2],
         label: "1-PACKAGE STAGING · 1 CARTON",
         color: ORDERS[2].color,
-        center: [2.0, 6.6],
+        center: [-0.2, 5.25],
         size: [1.7, 1.7],
-        slots: [[2.0, 6.6]],
+        slots: [[-0.2, 5.25]],
       },
     ];
 
@@ -1532,10 +1513,10 @@ export default function SupplyChainSim() {
       g.font = "26px 'IBM Plex Mono', monospace";
       const rows = [
         ["Order A", "1 package ", "1/1", "#00c8ff", false],
-        ["Order B", "2 packages", "1/2 2/2", "#ffd166", false],
+        ["Order B", "3 packages", "1/3 2/3 3/3", "#ffd166", false],
         devKnown
           ? ["Order C", "3\u21924 pcs ", "x/4", "#ff5c5c", true]
-          : ["Order C", "3 packages", "1/3 2/3 3/3", "#e44cff", false],
+          : ["Order C", "6 packages", "1/6 … 6/6", "#e44cff", false],
       ];
       rows.forEach((r, i) => {
         const y = 128 + i * 44;
@@ -1566,7 +1547,7 @@ export default function SupplyChainSim() {
     machine.visible = scenario === 3 || scenario === 4;
     relabelGroup.visible = scenario === 4;
     ortecGroup.visible = scenario === 4;
-    infeedGroup.visible = true;
+    rollCartInfoGroup.visible = true;
 
     // ================= PICKING LINK =================
     const linkBelt = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 5.0), new THREE.MeshStandardMaterial({ color: 0x2e4a3a, roughness: 0.9 }));
@@ -2240,7 +2221,7 @@ export default function SupplyChainSim() {
   const startPacking = () => {
     showPackingOnly();
     world.current.setManualView?.("Packing Stations");
-    startAt(PACK_OFF, `Packing started at ITEMS TO BE PACKED — ${SCENARIOS[scenario].title}`, "Packing Stations");
+    startAt(PACK_OFF, `Packing started at the station supply carts — ${SCENARIOS[scenario].title}`, "Packing Stations");
   };
   const doPlay = () => { simRef.current.playing = true; setPlaying(true); };
   const doPause = () => { simRef.current.playing = false; setPlaying(false); };
@@ -2401,7 +2382,7 @@ export default function SupplyChainSim() {
   const availableCameraViews = [
     "Full Chain",
     ...(showIn ? ["Inbound Docks", "Sorting", "Storage & Picking"] : []),
-    ...(showOut ? ["Items to be packed", "Packing Stations", "Label Check"] : []),
+    ...(showOut ? ["Station Supply Carts", "Packing Stations", "Label Check"] : []),
     ...(showShipping ? ["Shipping"] : []),
   ];
   const parseClockMinutes = (clock) => {
