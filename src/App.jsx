@@ -49,6 +49,7 @@ const SCENARIOS = {
   2: { title: "Wait, then label", short: "Wait, then label" },
   3: { title: "Temporary label, final label later", short: "Interim + final" },
   4: { title: "Label based on ORTEC proposal", short: "ORTEC proposal" },
+  5: { title: "Hybrid staging + interim label", short: "Hybrid stage + interim" },
 };
 const entryX = (st) => STATIONS[st].x + 1.5; // where the chute meets the conveyor
 
@@ -593,6 +594,110 @@ function buildPackScenario(n) {
     messages.push([DEV_T, "Exception on the 6-parcel proposal: actual count changes to 7 → correction loop", "err"]);
   }
 
+  // S5 — hybrid of S2 and S3: the 6-parcel station stages interim-labelled parcels,
+  // then releases them together to the downstream labelling machine.
+  if (n === 5) {
+    duration = 53;
+    keyMessage = "Interim labels are applied immediately. The 6-parcel order waits in a staging area and is released together to the downstream label machine once complete.";
+    const stageSlots6 = [
+      { x: -11.45, z: 4.1 }, { x: -10.25, z: 4.1 },
+      { x: -11.45, z: 5.25 }, { x: -10.25, z: 5.25 },
+      { x: -11.45, z: 6.4 }, { x: -10.25, z: 6.4 },
+    ];
+    const loopFrom = (t0) => [
+      [t0, MACHINE_X, CONV_Y, 0],
+      [t0 + 0.6, MACHINE_X + 1.5, CONV_Y, 0],
+      [t0 + 2.3, MACHINE_X + 1.5, CONV_Y, -4.2],
+      [t0 + 5.5, MACHINE_X - 6.5, CONV_Y, -4.2],
+      [t0 + 7.2, MACHINE_X - 6.5, CONV_Y, 0],
+      [t0 + 9.8, MACHINE_X, CONV_Y, 0],
+    ];
+
+    const addS3LikeOrder = (order, oi) => {
+      const completionBase = (order.count - 1) * 3.1 + oi * 0.45;
+      for (let i = 1; i <= order.count; i += 1) {
+        const spawn = (i - 1) * 3.1 + oi * 0.45;
+        const packEnd = spawn + 2.2;
+        const interimT = packEnd + 0.2;
+        const move = interimT + 0.35;
+        const tEnter = move + 1.25;
+        const tArr = ride(tEnter, entryX(order.station), MACHINE_X);
+        const mustLoop = i < order.count;
+        let path = [...packPath(order.station, spawn, move), ...toConv(order.station, move, tEnter).slice(1), [tArr, MACHINE_X, CONV_Y, 0]];
+        let finalT = tArr + 1;
+        const loop = [];
+        if (mustLoop) {
+          path = path.concat(loopFrom(finalT).slice(1));
+          loop.push([finalT, finalT + 9.8]);
+          finalT += 10.8;
+        }
+        const tExit = ride(finalT + 0.2, MACHINE_X, CONV_END);
+        path.push([tExit, CONV_END, CONV_Y, 0]);
+        const d = base(order, i, { spawn, packEnd, interimT, move, tEnter, tArr });
+        parcels.push({
+          ...d,
+          path,
+          seq: `${i}/${order.count}`,
+          finalT,
+          labels: [[interimT, "INTERIM", C.blue, d.id], [finalT, `${i}/${order.count}`, C.green, "final label"]],
+          conveyor: [tEnter, tExit],
+          loop,
+          stagingIv: null,
+          relabelIv: null,
+        });
+        scans.push(tArr, ...(mustLoop ? [finalT - 1] : []));
+      }
+      messages.push([completionBase + 2.5, `Order ${order.key}: ${order.count}/${order.count} parcels registered — final labels available`, "ok"]);
+    };
+
+    // Orders B and A behave like S3.
+    addS3LikeOrder(ORDERS[1], 1);
+    addS3LikeOrder(ORDERS[2], 2);
+
+    // Order C (6 parcels) behaves like staged S3.
+    const order = ORDERS[0];
+    const oi = 0;
+    const completion = (order.count - 1) * 3.1 + oi * 0.45 + 4.0;
+    for (let i = 1; i <= order.count; i += 1) {
+      const spawn = (i - 1) * 3.1 + oi * 0.45;
+      const packEnd = spawn + 2.2;
+      const interimT = packEnd + 0.2;
+      const stageIn = interimT + 0.45;
+      const s = stageSlots6[i - 1];
+      const release = completion + 1.4 + (i - 1) * 0.35;
+      const tEnter = release + 0.95;
+      const tArr = ride(tEnter, entryX(order.station), MACHINE_X);
+      const finalT = tArr + 0.8;
+      const tExit = ride(finalT + 0.2, MACHINE_X, CONV_END);
+      const d = base(order, i, { spawn, packEnd, interimT, stageIn, release, tEnter, tArr });
+      parcels.push({
+        ...d,
+        path: [
+          ...packPath(order.station, spawn, packEnd),
+          [stageIn, s.x, 0.80 + d.size[1] / 2, s.z],
+          [release, s.x, 0.80 + d.size[1] / 2, s.z],
+          [release + 0.5, (s.x + entryX(order.station)) / 2, CONV_Y + 0.5, 2.2],
+          [tEnter, entryX(order.station), CONV_Y, 0],
+          [tArr, MACHINE_X, CONV_Y, 0],
+          [finalT, MACHINE_X, CONV_Y, 0],
+          [tExit, CONV_END, CONV_Y, 0],
+        ],
+        seq: `${i}/${order.count}`,
+        finalT,
+        labels: [[interimT, "INTERIM", C.blue, d.id], [finalT, `${i}/${order.count}`, C.green, "final label"]],
+        conveyor: [tEnter, tExit],
+        loop: [],
+        stagingIv: [stageIn, release],
+        relabelIv: null,
+      });
+      scans.push(tArr);
+    }
+    messages.push([0, "Hybrid scenario: the 6-parcel station stages interim-labelled parcels until the order is complete", "info"]);
+    messages.push([completion, "Order C complete: all 6 parcels are released together to the downstream label machine", "ok"]);
+    messages.push([completion + 1.2, "Order C receives the final 1/6 … 6/6 labels downstream", "ok"]);
+    messages.push([6, "Orders B and A continue to flow immediately with interim labels", "info"]);
+  }
+
   // Prepend the ORTEC-routed infeed for every packing scenario.
   const OFF = 5;
   parcels.forEach((p) => {
@@ -1040,14 +1145,15 @@ export default function SupplyChainSim() {
     STATIONS.forEach((st, si) => {
       const g = new THREE.Group();
       const isS2 = scenario === 2;
+      const isS5 = scenario === 5;
       const orderColor = ORDERS[si].color;
       const baseX = st.x;
-      const tableX = isS2 ? baseX + 0.55 : baseX;
+      const tableX = isS2 ? baseX + 0.55 : isS5 && si === 0 ? baseX + 0.55 : baseX;
       const tableZ = st.z;
-      const packerX = isS2 ? baseX - 0.7 : baseX;
-      const packerZ = isS2 ? st.z + 1.55 : st.z + 1.6;
-      const printerX = isS2 ? tableX + 1.0 : st.x - 1.25;
-      const printerZ = isS2 ? st.z - 0.25 : st.z - 0.5;
+      const packerX = isS2 ? baseX - 0.7 : isS5 && si === 0 ? baseX - 0.7 : baseX;
+      const packerZ = isS2 ? st.z + 1.55 : isS5 && si === 0 ? st.z + 1.55 : st.z + 1.6;
+      const printerX = isS2 ? tableX + 1.0 : isS5 && si === 0 ? tableX + 1.0 : st.x - 1.25;
+      const printerZ = isS2 ? st.z - 0.25 : isS5 && si === 0 ? st.z - 0.25 : st.z - 0.5;
 
       // packing table
       const top = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.16, 2.0), mat(0x3a4657, 0.5, 0.3));
@@ -1061,8 +1167,8 @@ export default function SupplyChainSim() {
 
       // Roll cart on the viewer-facing side of the workstation.
       // It stands in front of the packer, between the operator and the camera.
-      const cartX = isS2 ? packerX : baseX;
-      const cartZ = isS2 ? 7.15 : 6.55;
+      const cartX = isS2 ? baseX - 0.05 : isS5 && si === 0 ? baseX - 0.05 : baseX;
+      const cartZ = isS2 ? 7.35 : isS5 && si === 0 ? 7.35 : 6.55;
       const cartW = 1.25, cartD = 0.7, cartH = 1.95;
       const cartMat = mat(0x667382, 0.45, 0.38);
       const cartBody = new THREE.Group();
@@ -1271,6 +1377,7 @@ export default function SupplyChainSim() {
     // Waiting area (scenario 2) — one staging table beside each station.
     // No conveyor passes over or through these tables.
     const staging = new THREE.Group();
+    const stagingGroups = [];
 
     const stagingTables = [
       {
@@ -1303,7 +1410,8 @@ export default function SupplyChainSim() {
       },
     ];
 
-    stagingTables.forEach((cfg) => {
+    stagingTables.forEach((cfg, cfgIndex) => {
+      const group = new THREE.Group();
       const [cx, cz] = cfg.center;
       const [tableWidth, tableDepth] = cfg.size;
 
@@ -1313,7 +1421,7 @@ export default function SupplyChainSim() {
       );
       tableTop.position.set(cx, 0.72, cz);
       tableTop.castShadow = true;
-      staging.add(tableTop);
+      group.add(tableTop);
 
       [
         [-tableWidth / 2 + 0.16, -tableDepth / 2 + 0.16],
@@ -1326,7 +1434,7 @@ export default function SupplyChainSim() {
           mat(0x2a3441, 0.5, 0.45)
         );
         leg.position.set(cx + dx, 0.35, cz + dz);
-        staging.add(leg);
+        group.add(leg);
       });
 
       cfg.slots.forEach(([sx, sz], slotIndex) => {
@@ -1341,7 +1449,7 @@ export default function SupplyChainSim() {
         );
         marker.rotation.x = -Math.PI / 2;
         marker.position.set(sx, 0.815, sz);
-        staging.add(marker);
+        group.add(marker);
 
         const border = new THREE.LineSegments(
           new THREE.EdgesGeometry(new THREE.PlaneGeometry(1.15, 1.05)),
@@ -1349,7 +1457,7 @@ export default function SupplyChainSim() {
         );
         border.rotation.x = -Math.PI / 2;
         border.position.set(sx, 0.825, sz);
-        staging.add(border);
+        group.add(border);
 
         const number = makeTextPlane(
           `${slotIndex + 1}/${cfg.slots.length}`,
@@ -1359,7 +1467,7 @@ export default function SupplyChainSim() {
         );
         number.position.set(sx, 1.08, sz);
         number.rotation.x = -Math.PI / 2;
-        staging.add(number);
+        group.add(number);
       });
 
       const tableSign = makeTextPlane(
@@ -1369,7 +1477,9 @@ export default function SupplyChainSim() {
         0.42
       );
       tableSign.position.set(cx, 2.2, cz);
-      staging.add(tableSign);
+      group.add(tableSign);
+      staging.add(group);
+      stagingGroups.push(group);
     });
 
     propsOut.add(staging);
@@ -1554,9 +1664,12 @@ export default function SupplyChainSim() {
     // S2: packages wait on staging tables until the complete order is ready
     // S3: interim labels, downstream labelling machine and waiting loop
     // S4: predictive ORTEC labels, verification scan and correction spur
-    staging.visible = scenario === 2;
-    loopGroup.visible = scenario === 3;
-    machine.visible = scenario === 3 || scenario === 4;
+    staging.visible = scenario === 2 || scenario === 5;
+    stagingGroups.forEach((group, idx) => {
+      group.visible = scenario === 2 || (scenario === 5 && idx === 0);
+    });
+    loopGroup.visible = scenario === 3 || scenario === 5;
+    machine.visible = scenario === 3 || scenario === 4 || scenario === 5;
     relabelGroup.visible = scenario === 4;
     ortecGroup.visible = scenario === 4;
     rollCartInfoGroup.visible = true;
@@ -1975,7 +2088,7 @@ export default function SupplyChainSim() {
 
       // scanner beam pulse
       let beamOn = false;
-      if (dP.n === 3 || dP.n === 4) {
+      if (dP.n === 3 || dP.n === 4 || dP.n === 5) {
         beamOn = dP.scans.some((st) => t >= st && t <= st + 1.0);
         beam.material.opacity = beamOn ? 0.35 + 0.25 * Math.sin(now * 0.02) : 0;
       }
@@ -1987,7 +2100,7 @@ export default function SupplyChainSim() {
       }
 
       // machine display state
-      if (dP.n === 3 || dP.n === 4) {
+      if (dP.n === 3 || dP.n === 4 || dP.n === 5) {
         let scansN = 0;
         dP.scans.forEach((st) => { if (t >= st) scansN++; });
         let current = "—", currentP = null;
@@ -1995,7 +2108,7 @@ export default function SupplyChainSim() {
           const pos = posAt(p.path, t);
           if (Math.abs(pos[1] - MACHINE_X) < 0.8 && Math.abs(pos[3]) < 0.8 && t >= p.conveyor[0]) { current = p.id; currentP = p; }
         });
-        if (dP.n === 3) {
+        if (dP.n === 3 || dP.n === 5) {
           // per-order registration status of the parcel currently at the machine
           let reg = 0, total = 3, orderNo = "\u2014";
           if (currentP) {
@@ -2112,7 +2225,7 @@ export default function SupplyChainSim() {
           waitSum += w; waitCount++;
           waitByOrder[pd.order] += w;
         }
-        if (dP.n === 3) {
+        if (dP.n === 3 || dP.n === 5) {
           pd.loop.forEach(([a, b]) => {
             if (t >= a) {
               const w = Math.min(t, b) - a;
@@ -2332,7 +2445,7 @@ export default function SupplyChainSim() {
     stopGuidedDemo();
     setGuidedDemo(true);
     setSpd(2);
-    const sequence = [1, 2, 3, 4];
+    const sequence = [1, 2, 3, 4, 5];
     guidedTimersRef.current = sequence.map((n, index) => window.setTimeout(() => {
       launchGuidedScenario(n);
       if (index === sequence.length - 1) {
@@ -2367,6 +2480,7 @@ export default function SupplyChainSim() {
     2: "Packages wait in staging until the complete order is packed. Final labels are then applied together.",
     3: "Packages receive interim labels and move directly to the conveyor. Final labels are applied later, including a scanner loop when required.",
     4: "Labels are created from the ORTEC packing proposal. Verification failures enter the correction loop and pass the scanner again.",
+    5: "Hybrid scenario: most parcels behave like S3, but the 6-HU station stages interim-labelled parcels until the order is complete and sends them together to the downstream label machine.",
   };
 
   const scenarioObjectives = {
@@ -2397,6 +2511,13 @@ export default function SupplyChainSim() {
       description: "The expected Handling Unit count is predicted before packing. Orders are routed to the appropriate station and labels can show the final HU sequence immediately.",
       result: "Benefit: no staging, immediate labels and correction only when verification fails.",
       accent: C.yellow,
+    },
+    5: {
+      eyebrow: "THEORETICAL SCENARIO",
+      title: "Hybrid staging + interim label",
+      description: "Most parcels flow like S3 with interim labels. Only the 6-HU station stages the finished parcels, waits until all six are packed, and then sends them together to the downstream label machine for the final labels.",
+      result: "Benefit: controlled release for the 6-HU order while retaining interim-label flow for the other stations.",
+      accent: C.orange,
     },
   };
 
@@ -2542,7 +2663,7 @@ export default function SupplyChainSim() {
             <div style={{ padding: 9 }}>
               <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 800, letterSpacing: 1.1, marginBottom: 7 }}>NEW LABEL PROCESS</div>
               <div style={{ display: "grid", gap: 6 }}>
-                {[2, 3, 4].map((n) => (
+                {[2, 3, 4, 5].map((n) => (
                   <button key={n} onClick={() => changeScenario(n)} style={{ ...smallBtn(scenario === n), width: "100%", textAlign: "left", padding: "9px 10px", display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 8, alignItems: "center" }}>
                     <span>S{n}</span><span style={{ overflow: "hidden", textOverflow: "ellipsis", display: "flex", justifyContent: "space-between", gap: 6 }}>{SCENARIOS[n].short} {scenario === n && <b style={{ color: C.green, fontSize: 8 }}>ACTIVE</b>}</span>
                   </button>
