@@ -752,8 +752,6 @@ function shiftPack(pack, dt) {
   pack.duration += dt;
 }
 
-const PACK_OFF = 1.2;
-
 const CHAIN_PACK_OFF = 40;
 
 function buildChainData(packScenario = 4) {
@@ -2342,6 +2340,14 @@ export default function SupplyChainSim() {
   }, []);
 
   // ---------- UI actions ----------
+  const getImmediatePackingStart = () => {
+    const packParcels = simRef.current?.data?.pack?.parcels || [];
+    const firstRealParcel = packParcels
+      .filter((p) => !p.tote && typeof p.spawn === "number")
+      .sort((a, b) => a.spawn - b.spawn)[0];
+    return firstRealParcel ? Math.max(0, firstRealParcel.spawn + 0.05) : CHAIN_PACK_OFF + 5.05;
+  };
+
   const startAt = (startTime, message, viewName) => {
     const S = simRef.current;
     S.t = startTime;
@@ -2359,7 +2365,8 @@ export default function SupplyChainSim() {
   const startPacking = () => {
     showPackingOnly();
     world.current.setManualView?.("Packing Stations");
-    startAt(PACK_OFF, `Packing started at the station supply carts — ${SCENARIOS[scenario].title}`, "Packing Stations");
+    const packingStart = getImmediatePackingStart();
+    startAt(packingStart, `Packing started at the station supply carts — ${SCENARIOS[scenario].title}`, "Packing Stations");
   };
   const doPlay = () => { simRef.current.playing = true; setPlaying(true); };
   const doPause = () => { simRef.current.playing = false; setPlaying(false); };
@@ -2436,11 +2443,15 @@ export default function SupplyChainSim() {
   };
   const launchGuidedScenario = (n) => {
     const nextData = buildChainData(n);
-    simRef.current = { ...simRef.current, t: PACK_OFF, playing: true, rebuilt: true, data: nextData };
+    const firstRealParcel = nextData.pack.parcels
+      .filter((p) => !p.tote && typeof p.spawn === "number")
+      .sort((a, b) => a.spawn - b.spawn)[0];
+    const packingStart = firstRealParcel ? Math.max(0, firstRealParcel.spawn + 0.05) : CHAIN_PACK_OFF + 5.05;
+    simRef.current = { ...simRef.current, t: packingStart, playing: true, rebuilt: true, data: nextData };
     setScenario(n);
     setPlaying(true);
     showPackingOnly();
-    setHud((h) => ({ ...h, t: PACK_OFF, done: false, msg: `Guided demo · S${n}: ${SCENARIOS[n].title}`, msgKind: "info" }));
+    setHud((h) => ({ ...h, t: packingStart, done: false, msg: `Guided demo · S${n}: ${SCENARIOS[n].title}`, msgKind: "info" }));
     window.setTimeout(() => world.current.setManualView?.("Packing Stations"), 0);
   };
   const startGuidedDemo = () => {
