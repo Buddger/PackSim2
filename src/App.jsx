@@ -1349,29 +1349,7 @@ export default function SupplyChainSim() {
     loadingBay.position.set(CONV_END + 1.65, 0.08, 0);
     shippingGroup.add(loadingBay);
 
-    // Station supply concept for all packing scenarios: each station has its own roll cart
-    // with several levels of items instead of a feeder belt from storage / items-to-be-packed.
-    const rollCartInfoGroup = new THREE.Group();
-    const supplySign = makeTextPlane(
-      "STATION SUPPLY · ITEMS ARRIVE ON MULTI-LEVEL ROLL CARTS",
-      "#e8edf4",
-      7.2,
-      0.55
-    );
-    supplySign.position.set(-3.5, 4.2, 1.1);
-    rollCartInfoGroup.add(supplySign);
-
-    const flowHint = makeTextPlane(
-      scenario === 2
-        ? "S2 LAYOUT · STAGING LEFT · PACKER CENTER · PACK TABLE RIGHT"
-        : "ROLL CARTS STAND IN FRONT OF THE PACKERS · ITEMS ARE CONSUMED DURING PACKING",
-      scenario === 2 ? C.blue : C.dim,
-      6.6,
-      0.42
-    );
-    flowHint.position.set(-3.5, 3.45, 1.15);
-    rollCartInfoGroup.add(flowHint);
-    propsOut.add(rollCartInfoGroup);
+    // Extra station-supply banners intentionally omitted for a cleaner packing view.
 
     // Waiting area (scenario 2) — one staging table beside each station.
     // No conveyor passes over or through these tables.
@@ -1651,11 +1629,7 @@ export default function SupplyChainSim() {
     }
     drawOrtec(false);
 
-    // order banner
-    const orderSign = makeTextPlane("PACKING AREA", "#e8edf4", 4.2, 0.7);
-    orderSign.position.set(-3.5, 4.4, 3.2);
-    propsOut.add(orderSign);
-
+    // Large packing-area banner intentionally omitted.
 
 
     // Show the physical equipment required by the selected packing scenario.
