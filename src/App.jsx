@@ -714,12 +714,12 @@ function buildPackScenario(n) {
     const SEQ_X = 13.2;
     const LABEL_X = 15.8;
     const bufferSlots = [
-      { x: BUFFER_X - 1.05, y: 0.82, z: BUFFER_Z },
-      { x: BUFFER_X, y: 0.82, z: BUFFER_Z },
-      { x: BUFFER_X + 1.05, y: 0.82, z: BUFFER_Z },
-      { x: BUFFER_X - 1.05, y: 1.72, z: BUFFER_Z },
-      { x: BUFFER_X, y: 1.72, z: BUFFER_Z },
-      { x: BUFFER_X + 1.05, y: 1.72, z: BUFFER_Z },
+      { x: BUFFER_X - 1.9, y: 0.82, z: BUFFER_Z },
+      { x: BUFFER_X - 1.1, y: 0.82, z: BUFFER_Z },
+      { x: BUFFER_X - 0.3, y: 0.82, z: BUFFER_Z },
+      { x: BUFFER_X + 0.5, y: 0.82, z: BUFFER_Z },
+      { x: BUFFER_X + 1.3, y: 0.82, z: BUFFER_Z },
+      { x: BUFFER_X + 2.1, y: 0.82, z: BUFFER_Z },
     ];
 
     // 1- and 3-HU orders pass through the same identification and final-label architecture.
@@ -1830,7 +1830,7 @@ export default function SupplyChainSim() {
     bufferCv.width = 500; bufferCv.height = 250;
     const bufferTex = new THREE.CanvasTexture(bufferCv);
     const bufferPanel = new THREE.Mesh(new THREE.PlaneGeometry(4.8, 2.4), new THREE.MeshBasicMaterial({ map: bufferTex }));
-    bufferPanel.position.set(BUFFER_X, 4.15, BUFFER_Z + 1.45);
+    bufferPanel.position.set(BUFFER_X + 0.15, 3.25, BUFFER_Z + 1.15);
     loopRackGroup.add(bufferPanel);
     let bufferStatusKey = "";
     function drawBufferStatus(stored, released) {
