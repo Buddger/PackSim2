@@ -50,7 +50,7 @@ const SCENARIOS = {
   3: { title: "Temporary label, final label later", short: "Interim + final" },
   4: { title: "Hybrid staging + interim label", short: "Hybrid stage + interim" },
   5: { title: "Label based on ORTEC proposal", short: "ORTEC proposal" },
-  6: { title: "Loop rack staging + interim label", short: "Loop rack staging" },
+  6: { title: "Controlled release from buffer", short: "Smart buffer release" },
 };
 const entryX = (st) => STATIONS[st].x + 1.5; // where the chute meets the conveyor
 
@@ -699,12 +699,14 @@ function buildPackScenario(n) {
     messages.push([6, "Orders B and A continue to flow immediately with interim labels", "info"]);
   }
 
-  // S6 — alternative to the hybrid staging concept:
-  // the 6-HU order behaves like S3, but instead of using a large staging area at the packing station,
-  // the finished parcels are buffered on a small rack at the relabeling loop until the last parcel is packed.
+  // S6 — controlled release from buffer:
+  // the 6-HU order behaves like S3 at the pack table, but instead of using the active
+  // waiting loop as temporary storage, the interim-labelled parcels are buffered on a
+  // compact rack beside the relabeling area. Once the last parcel is packed, the rack
+  // releases the parcels one by one to the final labelling machine.
   if (n === 6) {
-    duration = 56;
-    keyMessage = "A compact buffer rack at the relabeling loop temporarily stores the interim-labelled 6-HU parcels until the final parcel is available.";
+    duration = 58;
+    keyMessage = "Interim-labelled parcels for the 6-HU order are buffered on a compact rack and released one by one to the final labelling machine only after the full order is complete.";
     const rackSlots6 = [
       { x: MACHINE_X - 5.95, y: 0.86, z: -4.6 },
       { x: MACHINE_X - 5.15, y: 0.86, z: -4.6 },
@@ -713,6 +715,7 @@ function buildPackScenario(n) {
       { x: MACHINE_X - 5.95, y: 2.20, z: -4.6 },
       { x: MACHINE_X - 5.15, y: 2.20, z: -4.6 },
     ];
+
     const addS3LikeOrder = (order, oi) => {
       const completionBase = (order.count - 1) * 3.1 + oi * 0.45;
       for (let i = 1; i <= order.count; i += 1) {
@@ -756,11 +759,11 @@ function buildPackScenario(n) {
       messages.push([completionBase + 2.5, `Order ${order.key}: ${order.count}/${order.count} parcels registered — final labels available`, "ok"]);
     };
 
-    // 1- and 3-parcel orders remain pure S3 flow.
+    // Orders B and A remain pure S3 flow.
     addS3LikeOrder(ORDERS[1], 1);
     addS3LikeOrder(ORDERS[2], 2);
 
-    // 6-parcel order uses a compact rack near the relabeling loop.
+    // Order C (6 parcels) uses the compact buffer rack near the relabel area.
     const order = ORDERS[0];
     const oi = 0;
     const completion = (order.count - 1) * 3.1 + oi * 0.45 + 4.0;
@@ -770,29 +773,27 @@ function buildPackScenario(n) {
       const interimT = packEnd + 0.2;
       const move = interimT + 0.35;
       const tEnter = move + 1.25;
-      const toMachine = ride(tEnter, entryX(order.station), MACHINE_X);
-      const toLoop = toMachine + 5.0;
+      const tMerge = ride(tEnter, entryX(order.station), MACHINE_X - 1.2);
+      const tBranch = tMerge + 1.2;
       const s = rackSlots6[i - 1];
-      const stageIn = toLoop + 0.9;
-      const release = completion + 1.6 + (i - 1) * 0.42;
-      const toScannerApproach = release + 4.1;
-      const finalT = toScannerApproach + 0.9;
+      const stageIn = tBranch + 1.8;
+      const release = completion + 1.7 + (i - 1) * 1.05;
+      const queueEnter = release + 1.1;
+      const toScanner = queueEnter + 2.0;
+      const finalT = toScanner + 0.9;
       const tExit = ride(finalT + 0.2, MACHINE_X, CONV_END);
-      const d = base(order, i, { spawn, packEnd, interimT, move, tEnter, stageIn, release, tArr: toScannerApproach });
+      const d = base(order, i, { spawn, packEnd, interimT, move, tEnter, stageIn, release, tArr: toScanner });
       parcels.push({
         ...d,
         path: [
           ...packPath(order.station, spawn, move),
           ...toConv(order.station, move, tEnter).slice(1),
-          [toMachine, MACHINE_X, CONV_Y, 0],
-          [toMachine + 0.8, MACHINE_X + 1.5, CONV_Y, 0],
-          [toMachine + 2.3, MACHINE_X + 1.5, CONV_Y, -4.2],
-          [toMachine + 4.0, MACHINE_X - 5.55, CONV_Y, -4.2],
+          [tMerge, MACHINE_X - 1.2, CONV_Y, 0],
+          [tBranch, MACHINE_X - 1.2, CONV_Y, -4.2],
           [stageIn, s.x, s.y, s.z],
           [release, s.x, s.y, s.z],
-          [release + 0.8, MACHINE_X - 5.55, CONV_Y, -4.2],
-          [release + 2.2, MACHINE_X - 6.5, CONV_Y, 0],
-          [toScannerApproach, MACHINE_X, CONV_Y, 0],
+          [queueEnter, MACHINE_X - 2.2, CONV_Y, -4.2],
+          [toScanner, MACHINE_X, CONV_Y, 0],
           [finalT, MACHINE_X, CONV_Y, 0],
           [tExit, CONV_END, CONV_Y, 0],
         ],
@@ -804,12 +805,12 @@ function buildPackScenario(n) {
         stagingIv: [stageIn, release],
         relabelIv: null,
       });
-      scans.push(toScannerApproach);
+      scans.push(toScanner);
     }
-    messages.push([0, "Alternative concept: the 6-HU order uses a compact rack at the relabeling loop instead of a large staging area at packing", "info"]);
-    messages.push([7.5, "The 6-HU parcels receive interim labels and move to the loop-side buffer rack", "info"]);
-    messages.push([completion, "All 6 parcels are complete — the rack releases them back to the scanner one after another", "ok"]);
-    messages.push([completion + 1.6, "Final labels 1/6 … 6/6 are printed downstream after the rack release", "ok"]);
+    messages.push([0, "Alternative concept: the 6-HU order uses a compact buffer rack near the relabeling area instead of the active waiting loop", "info"]);
+    messages.push([7.5, "The 6-HU parcels receive interim labels and move into the buffer rack", "info"]);
+    messages.push([completion, "All 6 parcels are complete — controlled release starts from the buffer rack", "ok"]);
+    messages.push([completion + 2.8, "Parcels are sent one by one to the label machine, preventing congestion in the waiting loop", "ok"]);
   }
 
   // Prepend the ORTEC-routed infeed for every packing scenario.
@@ -2617,7 +2618,7 @@ export default function SupplyChainSim() {
     3: "Packages receive interim labels and move directly to the conveyor. Final labels are applied later, including a scanner loop when required.",
     4: "Hybrid scenario: most parcels behave like S3, but the 6-HU station stages interim-labelled parcels until the order is complete and sends them together to the downstream label machine.",
     5: "Labels are created from the ORTEC packing proposal. Verification failures enter the correction loop and pass the scanner again.",
-    6: "Alternative concept: the 6-HU order uses a compact buffer rack at the relabeling loop. Interim-labelled parcels are stored there until the last parcel is packed and then receive the final labels downstream.",
+    6: "Controlled-release concept: the 6-HU order uses a compact buffer rack near the relabeling area. Interim-labelled parcels are stored there until the order is complete and are then released one by one to the final labeling machine.",
   };
 
   const scenarioObjectives = {
@@ -2658,9 +2659,9 @@ export default function SupplyChainSim() {
     },
     6: {
       eyebrow: "THEORETICAL SCENARIO",
-      title: "Loop rack staging + interim label",
-      description: "This concept keeps the S3 interim-label flow, but replaces the large 6-package staging area at packing with a compact rack at the relabeling loop.",
-      result: "Benefit: the 6-HU order still waits until complete, but the temporary storage is moved away from the packing station.",
+      title: "Controlled release from buffer",
+      description: "This concept keeps the S3 interim-label flow, but replaces the large staging area and the congested waiting loop with a compact buffer rack beside the relabeling area.",
+      result: "Benefit: the loop stays free because the parcels wait in the rack and are released to final labeling only when capacity is available.",
       accent: C.red,
     },
   };
