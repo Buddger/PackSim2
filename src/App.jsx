@@ -1776,34 +1776,29 @@ export default function SupplyChainSim() {
     bufferCross.position.set((DIVERT_X + BUFFER_X) / 2 + 0.3, 0.62, BUFFER_Z);
     loopRackGroup.add(divertLane, bufferCross);
 
-    // Two-sided carton-shuttle / mini-load buffer with six highlighted HU positions.
+    // Single-row carton-shuttle / mini-load buffer with six dedicated HU positions.
     const rackMat = mat(0x596879, 0.46, 0.34);
-    const rackW = 4.6, rackD = 1.25, rackH = 3.35;
-    [-1, 1].forEach((side) => {
-      const z = BUFFER_Z + side * 1.45;
-      [[-rackW/2,-rackD/2],[rackW/2,-rackD/2],[-rackW/2,rackD/2],[rackW/2,rackD/2]].forEach(([dx,dz]) => {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.11, rackH, 0.11), rackMat);
-        post.position.set(BUFFER_X + dx, rackH/2, z + dz); loopRackGroup.add(post);
-      });
-      [0.18, 1.08, 1.98, 2.88].forEach((y) => {
-        const shelf = new THREE.Mesh(new THREE.BoxGeometry(rackW, 0.10, rackD), rackMat);
-        shelf.position.set(BUFFER_X, y, z); loopRackGroup.add(shelf);
-      });
+    const rackW = 5.6, rackD = 1.05, rackH = 1.85;
+    [[-rackW/2,-rackD/2],[rackW/2,-rackD/2],[-rackW/2,rackD/2],[rackW/2,rackD/2]].forEach(([dx,dz]) => {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.11, rackH, 0.11), rackMat);
+      post.position.set(BUFFER_X + dx, rackH/2, BUFFER_Z + dz); loopRackGroup.add(post);
     });
-    [0.64, 1.54].forEach((y) => {
-      [-1.05, 0, 1.05].forEach((dx) => {
-        const slot = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.06, 0.76), new THREE.MeshBasicMaterial({ color: 0x33465d, transparent: true, opacity: 0.80 }));
-        slot.position.set(BUFFER_X + dx, y, BUFFER_Z); loopRackGroup.add(slot);
-      });
+    [0.18, 1.10].forEach((y) => {
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(rackW, 0.10, rackD), rackMat);
+      shelf.position.set(BUFFER_X, y, BUFFER_Z); loopRackGroup.add(shelf);
+    });
+    [-2.0, -1.2, -0.4, 0.4, 1.2, 2.0].forEach((dx) => {
+      const slot = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.06, 0.72), new THREE.MeshBasicMaterial({ color: 0x33465d, transparent: true, opacity: 0.80 }));
+      slot.position.set(BUFFER_X + dx, 0.64, BUFFER_Z); loopRackGroup.add(slot);
     });
 
-    // Shuttle carriage in the centre aisle.
+    // Shuttle carriage travelling along the single rack row.
     const shuttle = new THREE.Group();
-    const shuttleBase = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.18, 0.78), mat(0x5b7fa3, 0.38, 0.45));
-    shuttleBase.position.set(BUFFER_X, 0.75, BUFFER_Z);
-    const shuttleMast = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.55, 0.14), mat(0x6c8ba8, 0.38, 0.38));
-    shuttleMast.position.set(BUFFER_X, 1.72, BUFFER_Z);
-    shuttle.add(shuttleBase, shuttleMast); loopRackGroup.add(shuttle);
+    const shuttleRail = new THREE.Mesh(new THREE.BoxGeometry(rackW + 0.35, 0.08, 0.16), mat(0x6c8ba8, 0.38, 0.38));
+    shuttleRail.position.set(BUFFER_X, 1.53, BUFFER_Z - 0.42);
+    const shuttleBase = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.20, 0.52), mat(0x5b7fa3, 0.38, 0.45));
+    shuttleBase.position.set(BUFFER_X - 2.0, 1.42, BUFFER_Z - 0.42);
+    shuttle.add(shuttleRail, shuttleBase); loopRackGroup.add(shuttle);
 
     // Sequencing conveyor and release gate back to the main line.
     const seqLane = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.12, 6.0), futureBeltMat);
@@ -1825,12 +1820,50 @@ export default function SupplyChainSim() {
     verifyCam.position.set(LABEL_X, 2.15, 0.85);
     loopRackGroup.add(cL, cR, cTop, printHead, verifyCam);
 
+    // Small equipment labels mounted close to each component.
+    const idPortalLabel = makeTextPlane("IDENTIFICATION PORTAL", "#c7d2e0", 2.7, 0.34);
+    idPortalLabel.position.set(ID_X, 3.22, 0);
+    idPortalLabel.rotation.y = -Math.PI / 2;
+
+    const scaleLabel = makeTextPlane("WEIGHING + DIMENSIONING", "#8fa0b5", 2.7, 0.30);
+    scaleLabel.position.set(ID_X - 0.72, 1.05, 0);
+    scaleLabel.rotation.y = -Math.PI / 2;
+
+    const scannerLabel = makeTextPlane("BARCODE / VISION SCANNER", "#8fa0b5", 2.6, 0.30);
+    scannerLabel.position.set(ID_X + 0.72, 2.05, 0);
+    scannerLabel.rotation.y = -Math.PI / 2;
+
+    const bufferLabel = makeTextPlane("AUTOMATED HU BUFFER", "#c7d2e0", 2.9, 0.34);
+    bufferLabel.position.set(BUFFER_X, 2.18, BUFFER_Z + 0.72);
+
+    const sequencingLabel = makeTextPlane("SEQUENCING GATE", "#c7d2e0", 2.4, 0.34);
+    sequencingLabel.position.set(SEQ_X, 2.45, 0.86);
+    sequencingLabel.rotation.y = -Math.PI / 2;
+
+    const printApplyLabel = makeTextPlane("PRINT & APPLY", "#c7d2e0", 2.0, 0.34);
+    printApplyLabel.position.set(LABEL_X, 3.38, -0.75);
+    printApplyLabel.rotation.y = -Math.PI / 2;
+
+    const verificationLabel = makeTextPlane("VISION CHECK", "#8fa0b5", 1.8, 0.30);
+    verificationLabel.position.set(LABEL_X, 2.45, 0.95);
+    verificationLabel.rotation.y = -Math.PI / 2;
+
+    loopRackGroup.add(
+      idPortalLabel,
+      scaleLabel,
+      scannerLabel,
+      bufferLabel,
+      sequencingLabel,
+      printApplyLabel,
+      verificationLabel
+    );
+
     // Dynamic architecture status board.
     const bufferCv = document.createElement("canvas");
     bufferCv.width = 500; bufferCv.height = 250;
     const bufferTex = new THREE.CanvasTexture(bufferCv);
     const bufferPanel = new THREE.Mesh(new THREE.PlaneGeometry(4.8, 2.4), new THREE.MeshBasicMaterial({ map: bufferTex }));
-    bufferPanel.position.set(BUFFER_X + 0.15, 3.25, BUFFER_Z + 1.15);
+    bufferPanel.position.set(BUFFER_X, 3.35, BUFFER_Z + 1.55);
     loopRackGroup.add(bufferPanel);
     let bufferStatusKey = "";
     function drawBufferStatus(stored, released) {
