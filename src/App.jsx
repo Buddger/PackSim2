@@ -708,12 +708,12 @@ function buildPackScenario(n) {
     duration = 58;
     keyMessage = "Interim-labelled parcels for the 6-HU order are buffered on a compact rack and released one by one to the final labelling machine only after the full order is complete.";
     const rackSlots6 = [
-      { x: MACHINE_X - 5.95, y: 0.86, z: -4.6 },
-      { x: MACHINE_X - 5.15, y: 0.86, z: -4.6 },
-      { x: MACHINE_X - 5.95, y: 1.53, z: -4.6 },
-      { x: MACHINE_X - 5.15, y: 1.53, z: -4.6 },
-      { x: MACHINE_X - 5.95, y: 2.20, z: -4.6 },
-      { x: MACHINE_X - 5.15, y: 2.20, z: -4.6 },
+      { x: MACHINE_X - 6.15, y: 0.78, z: -5.05 },
+      { x: MACHINE_X - 4.95, y: 0.78, z: -5.05 },
+      { x: MACHINE_X - 6.15, y: 1.62, z: -5.05 },
+      { x: MACHINE_X - 4.95, y: 1.62, z: -5.05 },
+      { x: MACHINE_X - 6.15, y: 2.46, z: -5.05 },
+      { x: MACHINE_X - 4.95, y: 2.46, z: -5.05 },
     ];
 
     const addS3LikeOrder = (order, oi) => {
@@ -773,13 +773,17 @@ function buildPackScenario(n) {
       const interimT = packEnd + 0.2;
       const move = interimT + 0.35;
       const tEnter = move + 1.25;
-      const tMerge = ride(tEnter, entryX(order.station), MACHINE_X - 1.2);
-      const tBranch = tMerge + 1.2;
+      const tMerge = ride(tEnter, entryX(order.station), MACHINE_X - 0.8);
+      const tDivert = tMerge + 1.0;
+      const tBufferLane = tDivert + 2.8;
+      const tRackFront = tBufferLane + 1.6;
       const s = rackSlots6[i - 1];
-      const stageIn = tBranch + 1.8;
-      const release = completion + 1.7 + (i - 1) * 1.05;
-      const queueEnter = release + 1.1;
-      const toScanner = queueEnter + 2.0;
+      const stageIn = tRackFront + 1.8;
+      const release = completion + 2.0 + (i - 1) * 1.25;
+      const tRackExit = release + 1.4;
+      const tReleaseLane = tRackExit + 1.8;
+      const tGate = tReleaseLane + 1.3;
+      const toScanner = tGate + 1.7;
       const finalT = toScanner + 0.9;
       const tExit = ride(finalT + 0.2, MACHINE_X, CONV_END);
       const d = base(order, i, { spawn, packEnd, interimT, move, tEnter, stageIn, release, tArr: toScanner });
@@ -788,11 +792,16 @@ function buildPackScenario(n) {
         path: [
           ...packPath(order.station, spawn, move),
           ...toConv(order.station, move, tEnter).slice(1),
-          [tMerge, MACHINE_X - 1.2, CONV_Y, 0],
-          [tBranch, MACHINE_X - 1.2, CONV_Y, -4.2],
+          [tMerge, MACHINE_X - 0.8, CONV_Y, 0],
+          [tDivert, MACHINE_X - 0.8, CONV_Y, -2.1],
+          [tBufferLane, MACHINE_X - 3.2, CONV_Y, -4.2],
+          [tRackFront, MACHINE_X - 5.55, CONV_Y, -4.2],
+          [stageIn - 0.9, MACHINE_X - 5.55, s.y, -4.55],
           [stageIn, s.x, s.y, s.z],
           [release, s.x, s.y, s.z],
-          [queueEnter, MACHINE_X - 2.2, CONV_Y, -4.2],
+          [tRackExit, MACHINE_X - 5.55, s.y, -4.55],
+          [tReleaseLane, MACHINE_X - 5.55, CONV_Y, -4.2],
+          [tGate, MACHINE_X - 2.2, CONV_Y, -4.2],
           [toScanner, MACHINE_X, CONV_Y, 0],
           [finalT, MACHINE_X, CONV_Y, 0],
           [tExit, CONV_END, CONV_Y, 0],
@@ -1746,32 +1755,94 @@ export default function SupplyChainSim() {
 
     // Large packing-area banner intentionally omitted.
 
-    // Compact rack beside the relabeling loop for scenario 6.
+    // Larger controlled-release buffer beside the relabeling area for scenario 6.
     const loopRackGroup = new THREE.Group();
     const rackMat = mat(0x596879, 0.46, 0.34);
     const rackX = MACHINE_X - 5.55;
-    const rackZ = -4.6;
-    const rackW = 1.3, rackD = 0.64, rackH = 2.45;
+    const rackZ = -5.05;
+    const rackW = 2.75, rackD = 1.15, rackH = 3.15;
     [[-rackW / 2, -rackD / 2], [rackW / 2, -rackD / 2], [-rackW / 2, rackD / 2], [rackW / 2, rackD / 2]].forEach(([dx, dz]) => {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, rackH, 0.08), rackMat);
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.11, rackH, 0.11), rackMat);
       post.position.set(rackX + dx, rackH / 2, rackZ + dz);
       loopRackGroup.add(post);
     });
-    [0.22, 0.95, 1.68].forEach((y) => {
-      const shelf = new THREE.Mesh(new THREE.BoxGeometry(rackW, 0.08, rackD), rackMat);
+    [0.18, 1.02, 1.86, 2.70].forEach((y) => {
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(rackW, 0.11, rackD), rackMat);
       shelf.position.set(rackX, y, rackZ);
       loopRackGroup.add(shelf);
     });
-    [0.56, 1.23, 1.90].forEach((y) => {
-      [-0.29, 0.29].forEach((dx) => {
+    [0.60, 1.44, 2.28].forEach((y) => {
+      [-0.60, 0.60].forEach((dx) => {
         const slot = new THREE.Mesh(
-          new THREE.BoxGeometry(0.44, 0.06, 0.24),
-          new THREE.MeshBasicMaterial({ color: 0x33465d, transparent: true, opacity: 0.75 })
+          new THREE.BoxGeometry(0.95, 0.06, 0.72),
+          new THREE.MeshBasicMaterial({ color: 0x33465d, transparent: true, opacity: 0.78 })
         );
         slot.position.set(rackX + dx, y, rackZ);
         loopRackGroup.add(slot);
       });
     });
+
+    // Dedicated buffer lane: the loop remains visually free while parcels wait in the rack.
+    const bufferLaneMat = new THREE.MeshStandardMaterial({ color: 0x314459, roughness: 0.88 });
+    const laneA = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 4.25), bufferLaneMat);
+    laneA.position.set(MACHINE_X - 0.8, 0.62, -2.1);
+    const laneB = new THREE.Mesh(new THREE.BoxGeometry(4.85, 0.12, 1.1), bufferLaneMat);
+    laneB.position.set(MACHINE_X - 3.18, 0.62, -4.2);
+    loopRackGroup.add(laneA, laneB);
+
+    // Controlled release gate in front of the return path.
+    const gatePostL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.5, 0.16), mat(0x6c7887, 0.45, 0.35));
+    const gatePostR = gatePostL.clone();
+    gatePostL.position.set(MACHINE_X - 2.2, 0.75, -4.75);
+    gatePostR.position.set(MACHINE_X - 2.2, 0.75, -3.65);
+    const gateArm = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 1.05), mat(0xff8c42, 0.5, 0.2));
+    gateArm.position.set(MACHINE_X - 2.2, 1.18, -4.2);
+    loopRackGroup.add(gatePostL, gatePostR, gateArm);
+
+    // Direction arrows make the buffer route explicit.
+    const bufferArrows = [
+      [MACHINE_X - 0.8, -1.2, "down"],
+      [MACHINE_X - 0.8, -3.0, "down"],
+      [MACHINE_X - 2.1, -4.2, "left"],
+      [MACHINE_X - 4.2, -4.2, "left"],
+      [MACHINE_X - 4.2, -4.45, "right"],
+      [MACHINE_X - 2.8, -4.45, "right"],
+    ];
+    bufferArrows.forEach(([ax, az, dir]) => {
+      const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.34, 4), new THREE.MeshBasicMaterial({ color: C.blue }));
+      arrow.position.set(ax, 0.96, az);
+      if (dir === "down") arrow.rotation.x = Math.PI / 2;
+      if (dir === "left") arrow.rotation.z = Math.PI / 2;
+      if (dir === "right") arrow.rotation.z = -Math.PI / 2;
+      loopRackGroup.add(arrow);
+    });
+
+    // Compact dynamic status board: WAITING -> READY -> CONTROLLED RELEASE.
+    const bufferCv = document.createElement("canvas");
+    bufferCv.width = 420; bufferCv.height = 220;
+    const bufferTex = new THREE.CanvasTexture(bufferCv);
+    const bufferPanel = new THREE.Mesh(new THREE.PlaneGeometry(3.8, 2.0), new THREE.MeshBasicMaterial({ map: bufferTex }));
+    bufferPanel.position.set(rackX, 3.85, rackZ);
+    loopRackGroup.add(bufferPanel);
+    let bufferStatusKey = "";
+    function drawBufferStatus(stored, released) {
+      const key = `${stored}-${released}`;
+      if (bufferStatusKey === key) return;
+      bufferStatusKey = key;
+      const g = bufferCv.getContext("2d");
+      g.fillStyle = "#0a1018"; g.fillRect(0, 0, 420, 220);
+      g.strokeStyle = stored < 6 ? C.yellow : C.green; g.lineWidth = 6; g.strokeRect(3, 3, 414, 214);
+      g.fillStyle = "#e8edf4"; g.font = "bold 27px 'IBM Plex Mono', monospace"; g.textAlign = "center";
+      g.fillText("CONTROLLED BUFFER", 210, 42);
+      g.fillStyle = stored < 6 ? C.yellow : C.green; g.font = "bold 58px 'IBM Plex Mono', monospace";
+      g.fillText(`${stored}/6`, 210, 112);
+      g.font = "bold 20px 'IBM Plex Mono', monospace";
+      g.fillText(stored < 6 ? "WAITING FOR FULL ORDER" : released > 0 ? `RELEASING ${released}/6` : "ORDER COMPLETE · READY", 210, 158);
+      g.fillStyle = "#8fa0b5"; g.font = "17px 'IBM Plex Mono', monospace";
+      g.fillText("Loop remains free for active flow", 210, 194);
+      bufferTex.needsUpdate = true;
+    }
+    drawBufferStatus(0, 0);
     propsOut.add(loopRackGroup);
 
     // Show the physical equipment required by the selected packing scenario.
@@ -2193,6 +2264,15 @@ export default function SupplyChainSim() {
           item.visible = itemIndex < visibleItems;
         });
       });
+      if (dP.n === 6) {
+        const rackParcels = dP.parcels.filter((p) => !p.tote && p.order === "C" && p.stagingIv);
+        const stored = rackParcels.filter((p) => t >= p.stagingIv[0]).length;
+        const released = rackParcels.filter((p) => t >= p.stagingIv[1]).length;
+        drawBufferStatus(Math.min(6, stored), Math.min(6, released));
+        gateArm.rotation.x = stored >= 6 && released < 6 ? -Math.PI / 3 : 0;
+        gateArm.material.color.set(stored >= 6 ? C.green : C.orange);
+      }
+
       printerPapers.forEach((paper, si) => {
         const stationLabelSoon = dP.parcels.some(
           (p) => p.st === si && p.labels.some((L) => !L[4] && L[0] <= p.move + 0.6 && Math.abs(t - L[0]) < 0.5)
