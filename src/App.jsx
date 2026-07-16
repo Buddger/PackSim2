@@ -50,6 +50,7 @@ const SCENARIOS = {
   3: { title: "Temporary label, final label later", short: "Interim + final" },
   4: { title: "Hybrid staging + interim label", short: "Hybrid stage + interim" },
   5: { title: "Label based on ORTEC proposal", short: "ORTEC proposal" },
+  6: { title: "Loop rack staging + interim label", short: "Loop rack staging" },
 };
 const entryX = (st) => STATIONS[st].x + 1.5; // where the chute meets the conveyor
 
@@ -696,6 +697,119 @@ function buildPackScenario(n) {
     messages.push([completion, "Order C complete: all 6 parcels are released together to the downstream label machine", "ok"]);
     messages.push([completion + 1.2, "Order C receives the final 1/6 … 6/6 labels downstream", "ok"]);
     messages.push([6, "Orders B and A continue to flow immediately with interim labels", "info"]);
+  }
+
+  // S6 — alternative to the hybrid staging concept:
+  // the 6-HU order behaves like S3, but instead of using a large staging area at the packing station,
+  // the finished parcels are buffered on a small rack at the relabeling loop until the last parcel is packed.
+  if (n === 6) {
+    duration = 56;
+    keyMessage = "A compact buffer rack at the relabeling loop temporarily stores the interim-labelled 6-HU parcels until the final parcel is available.";
+    const rackSlots6 = [
+      { x: MACHINE_X - 5.95, y: 0.86, z: -4.6 },
+      { x: MACHINE_X - 5.15, y: 0.86, z: -4.6 },
+      { x: MACHINE_X - 5.95, y: 1.53, z: -4.6 },
+      { x: MACHINE_X - 5.15, y: 1.53, z: -4.6 },
+      { x: MACHINE_X - 5.95, y: 2.20, z: -4.6 },
+      { x: MACHINE_X - 5.15, y: 2.20, z: -4.6 },
+    ];
+    const addS3LikeOrder = (order, oi) => {
+      const completionBase = (order.count - 1) * 3.1 + oi * 0.45;
+      for (let i = 1; i <= order.count; i += 1) {
+        const spawn = (i - 1) * 3.1 + oi * 0.45;
+        const packEnd = spawn + 2.2;
+        const interimT = packEnd + 0.2;
+        const move = interimT + 0.35;
+        const tEnter = move + 1.25;
+        const tArr = ride(tEnter, entryX(order.station), MACHINE_X);
+        const mustLoop = i < order.count;
+        let path = [...packPath(order.station, spawn, move), ...toConv(order.station, move, tEnter).slice(1), [tArr, MACHINE_X, CONV_Y, 0]];
+        let finalT = tArr + 1;
+        const loop = [];
+        if (mustLoop) {
+          path = path.concat([
+            [finalT + 0.6, MACHINE_X + 1.5, CONV_Y, 0],
+            [finalT + 2.3, MACHINE_X + 1.5, CONV_Y, -4.2],
+            [finalT + 5.5, MACHINE_X - 6.5, CONV_Y, -4.2],
+            [finalT + 7.2, MACHINE_X - 6.5, CONV_Y, 0],
+            [finalT + 9.8, MACHINE_X, CONV_Y, 0],
+          ]);
+          loop.push([finalT, finalT + 9.8]);
+          finalT += 10.8;
+        }
+        const tExit = ride(finalT + 0.2, MACHINE_X, CONV_END);
+        path.push([tExit, CONV_END, CONV_Y, 0]);
+        const d = base(order, i, { spawn, packEnd, interimT, move, tEnter, tArr });
+        parcels.push({
+          ...d,
+          path,
+          seq: `${i}/${order.count}`,
+          finalT,
+          labels: [[interimT, "INTERIM", C.blue, d.id], [finalT, `${i}/${order.count}`, C.green, "final label"]],
+          conveyor: [tEnter, tExit],
+          loop,
+          stagingIv: null,
+          relabelIv: null,
+        });
+        scans.push(tArr, ...(mustLoop ? [finalT - 1] : []));
+      }
+      messages.push([completionBase + 2.5, `Order ${order.key}: ${order.count}/${order.count} parcels registered — final labels available`, "ok"]);
+    };
+
+    // 1- and 3-parcel orders remain pure S3 flow.
+    addS3LikeOrder(ORDERS[1], 1);
+    addS3LikeOrder(ORDERS[2], 2);
+
+    // 6-parcel order uses a compact rack near the relabeling loop.
+    const order = ORDERS[0];
+    const oi = 0;
+    const completion = (order.count - 1) * 3.1 + oi * 0.45 + 4.0;
+    for (let i = 1; i <= order.count; i += 1) {
+      const spawn = (i - 1) * 3.1 + oi * 0.45;
+      const packEnd = spawn + 2.2;
+      const interimT = packEnd + 0.2;
+      const move = interimT + 0.35;
+      const tEnter = move + 1.25;
+      const toMachine = ride(tEnter, entryX(order.station), MACHINE_X);
+      const toLoop = toMachine + 5.0;
+      const s = rackSlots6[i - 1];
+      const stageIn = toLoop + 0.9;
+      const release = completion + 1.6 + (i - 1) * 0.42;
+      const toScannerApproach = release + 4.1;
+      const finalT = toScannerApproach + 0.9;
+      const tExit = ride(finalT + 0.2, MACHINE_X, CONV_END);
+      const d = base(order, i, { spawn, packEnd, interimT, move, tEnter, stageIn, release, tArr: toScannerApproach });
+      parcels.push({
+        ...d,
+        path: [
+          ...packPath(order.station, spawn, move),
+          ...toConv(order.station, move, tEnter).slice(1),
+          [toMachine, MACHINE_X, CONV_Y, 0],
+          [toMachine + 0.8, MACHINE_X + 1.5, CONV_Y, 0],
+          [toMachine + 2.3, MACHINE_X + 1.5, CONV_Y, -4.2],
+          [toMachine + 4.0, MACHINE_X - 5.55, CONV_Y, -4.2],
+          [stageIn, s.x, s.y, s.z],
+          [release, s.x, s.y, s.z],
+          [release + 0.8, MACHINE_X - 5.55, CONV_Y, -4.2],
+          [release + 2.2, MACHINE_X - 6.5, CONV_Y, 0],
+          [toScannerApproach, MACHINE_X, CONV_Y, 0],
+          [finalT, MACHINE_X, CONV_Y, 0],
+          [tExit, CONV_END, CONV_Y, 0],
+        ],
+        seq: `${i}/${order.count}`,
+        finalT,
+        labels: [[interimT, "INTERIM", C.blue, d.id], [finalT, `${i}/${order.count}`, C.green, "final label"]],
+        conveyor: [tEnter, tExit],
+        loop: [],
+        stagingIv: [stageIn, release],
+        relabelIv: null,
+      });
+      scans.push(toScannerApproach);
+    }
+    messages.push([0, "Alternative concept: the 6-HU order uses a compact rack at the relabeling loop instead of a large staging area at packing", "info"]);
+    messages.push([7.5, "The 6-HU parcels receive interim labels and move to the loop-side buffer rack", "info"]);
+    messages.push([completion, "All 6 parcels are complete — the rack releases them back to the scanner one after another", "ok"]);
+    messages.push([completion + 1.6, "Final labels 1/6 … 6/6 are printed downstream after the rack release", "ok"]);
   }
 
   // Prepend the ORTEC-routed infeed for every packing scenario.
@@ -1631,6 +1745,33 @@ export default function SupplyChainSim() {
 
     // Large packing-area banner intentionally omitted.
 
+    // Compact rack beside the relabeling loop for scenario 6.
+    const loopRackGroup = new THREE.Group();
+    const rackMat = mat(0x596879, 0.46, 0.34);
+    const rackX = MACHINE_X - 5.55;
+    const rackZ = -4.6;
+    const rackW = 1.3, rackD = 0.64, rackH = 2.45;
+    [[-rackW / 2, -rackD / 2], [rackW / 2, -rackD / 2], [-rackW / 2, rackD / 2], [rackW / 2, rackD / 2]].forEach(([dx, dz]) => {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, rackH, 0.08), rackMat);
+      post.position.set(rackX + dx, rackH / 2, rackZ + dz);
+      loopRackGroup.add(post);
+    });
+    [0.22, 0.95, 1.68].forEach((y) => {
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(rackW, 0.08, rackD), rackMat);
+      shelf.position.set(rackX, y, rackZ);
+      loopRackGroup.add(shelf);
+    });
+    [0.56, 1.23, 1.90].forEach((y) => {
+      [-0.29, 0.29].forEach((dx) => {
+        const slot = new THREE.Mesh(
+          new THREE.BoxGeometry(0.44, 0.06, 0.24),
+          new THREE.MeshBasicMaterial({ color: 0x33465d, transparent: true, opacity: 0.75 })
+        );
+        slot.position.set(rackX + dx, y, rackZ);
+        loopRackGroup.add(slot);
+      });
+    });
+    propsOut.add(loopRackGroup);
 
     // Show the physical equipment required by the selected packing scenario.
     // S1: direct labels with open package count (1/X through 6/X)
@@ -1641,10 +1782,11 @@ export default function SupplyChainSim() {
     stagingGroups.forEach((group, idx) => {
       group.visible = scenario === 2 || (scenario === 4 && idx === 0);
     });
-    loopGroup.visible = scenario === 3 || scenario === 4;
-    machine.visible = scenario === 3 || scenario === 4 || scenario === 5;
+    loopGroup.visible = scenario === 3 || scenario === 4 || scenario === 6;
+    machine.visible = scenario === 3 || scenario === 4 || scenario === 5 || scenario === 6;
     relabelGroup.visible = scenario === 5;
     ortecGroup.visible = scenario === 5;
+    loopRackGroup.visible = scenario === 6;
 
     // ================= PICKING LINK =================
     const linkBelt = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 5.0), new THREE.MeshStandardMaterial({ color: 0x2e4a3a, roughness: 0.9 }));
@@ -2060,7 +2202,7 @@ export default function SupplyChainSim() {
 
       // scanner beam pulse
       let beamOn = false;
-      if (dP.n === 3 || dP.n === 4 || dP.n === 5) {
+      if (dP.n === 3 || dP.n === 4 || dP.n === 5 || dP.n === 6) {
         beamOn = dP.scans.some((st) => t >= st && t <= st + 1.0);
         beam.material.opacity = beamOn ? 0.35 + 0.25 * Math.sin(now * 0.02) : 0;
       }
@@ -2072,7 +2214,7 @@ export default function SupplyChainSim() {
       }
 
       // machine display state
-      if (dP.n === 3 || dP.n === 4 || dP.n === 5) {
+      if (dP.n === 3 || dP.n === 4 || dP.n === 5 || dP.n === 6) {
         let scansN = 0;
         dP.scans.forEach((st) => { if (t >= st) scansN++; });
         let current = "—", currentP = null;
@@ -2080,7 +2222,7 @@ export default function SupplyChainSim() {
           const pos = posAt(p.path, t);
           if (Math.abs(pos[1] - MACHINE_X) < 0.8 && Math.abs(pos[3]) < 0.8 && t >= p.conveyor[0]) { current = p.id; currentP = p; }
         });
-        if (dP.n === 3 || dP.n === 5) {
+        if (dP.n === 3 || dP.n === 5 || dP.n === 6) {
           // per-order registration status of the parcel currently at the machine
           let reg = 0, total = 3, orderNo = "\u2014";
           if (currentP) {
@@ -2178,7 +2320,7 @@ export default function SupplyChainSim() {
         if (inStaging) auxTxt = `waiting ${(t - pd.stagingIv[0]).toFixed(0)}s`;
         const passStarted = pd.loop.filter(([a]) => t >= a).length;
         const inLoopNow = pd.loop.some(([a, b]) => t >= a && t <= b);
-        if (dP.n === 3 && passStarted > 0) auxTxt = `loop passes: ${passStarted}`;
+        if ((dP.n === 3 || dP.n === 6) && passStarted > 0) auxTxt = `loop passes: ${passStarted}`;
         if (inRelabelNow) auxTxt = "→ label correction";
         else if (pd.relabelIv && t >= pd.relabelIv[1]) auxTxt = "relabelled ✓";
         if (auxTxt !== pm.auxText) {
@@ -2204,7 +2346,7 @@ export default function SupplyChainSim() {
           waitSum += w; waitCount++;
           waitByOrder[pd.order] += w;
         }
-        if (dP.n === 3 || dP.n === 5) {
+        if (dP.n === 3 || dP.n === 5 || dP.n === 6) {
           pd.loop.forEach(([a, b]) => {
             if (t >= a) {
               const w = Math.min(t, b) - a;
@@ -2439,7 +2581,7 @@ export default function SupplyChainSim() {
     stopGuidedDemo();
     setGuidedDemo(true);
     setSpd(2);
-    const sequence = [1, 2, 3, 4, 5];
+    const sequence = [1, 2, 3, 4, 5, 6];
     guidedTimersRef.current = sequence.map((n, index) => window.setTimeout(() => {
       launchGuidedScenario(n);
       if (index === sequence.length - 1) {
@@ -2475,6 +2617,7 @@ export default function SupplyChainSim() {
     3: "Packages receive interim labels and move directly to the conveyor. Final labels are applied later, including a scanner loop when required.",
     4: "Hybrid scenario: most parcels behave like S3, but the 6-HU station stages interim-labelled parcels until the order is complete and sends them together to the downstream label machine.",
     5: "Labels are created from the ORTEC packing proposal. Verification failures enter the correction loop and pass the scanner again.",
+    6: "Alternative concept: the 6-HU order uses a compact buffer rack at the relabeling loop. Interim-labelled parcels are stored there until the last parcel is packed and then receive the final labels downstream.",
   };
 
   const scenarioObjectives = {
@@ -2512,6 +2655,13 @@ export default function SupplyChainSim() {
       description: "The expected Handling Unit count is predicted before packing. Orders are routed to the appropriate station and labels can show the final HU sequence immediately.",
       result: "Benefit: no staging, immediate labels and correction only when verification fails.",
       accent: C.yellow,
+    },
+    6: {
+      eyebrow: "THEORETICAL SCENARIO",
+      title: "Loop rack staging + interim label",
+      description: "This concept keeps the S3 interim-label flow, but replaces the large 6-package staging area at packing with a compact rack at the relabeling loop.",
+      result: "Benefit: the 6-HU order still waits until complete, but the temporary storage is moved away from the packing station.",
+      accent: C.red,
     },
   };
 
@@ -2657,7 +2807,7 @@ export default function SupplyChainSim() {
             <div style={{ padding: 9 }}>
               <div style={{ color: C.green, fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 800, letterSpacing: 1.1, marginBottom: 7 }}>NEW LABEL PROCESS</div>
               <div style={{ display: "grid", gap: 6 }}>
-                {[2, 3, 4, 5].map((n) => (
+                {[2, 3, 4, 5, 6].map((n) => (
                   <button key={n} onClick={() => changeScenario(n)} style={{ ...smallBtn(scenario === n), width: "100%", textAlign: "left", padding: "9px 10px", display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 8, alignItems: "center" }}>
                     <span>S{n}</span><span style={{ overflow: "hidden", textOverflow: "ellipsis", display: "flex", justifyContent: "space-between", gap: 6 }}>{SCENARIOS[n].short} {scenario === n && <b style={{ color: C.green, fontSize: 8 }}>ACTIVE</b>}</span>
                   </button>
