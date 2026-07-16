@@ -50,7 +50,7 @@ const SCENARIOS = {
   3: { title: "Temporary label, final label later", short: "Interim + final" },
   4: { title: "Hybrid staging + interim label", short: "Hybrid stage + interim" },
   5: { title: "Label based on ORTEC proposal", short: "ORTEC proposal" },
-  6: { title: "Controlled release from buffer", short: "Smart buffer release" },
+  6: { title: "Automated HU buffer & sequencing", short: "Automated HU buffer" },
 };
 const entryX = (st) => STATIONS[st].x + 1.5; // where the chute meets the conveyor
 
@@ -699,127 +699,122 @@ function buildPackScenario(n) {
     messages.push([6, "Orders B and A continue to flow immediately with interim labels", "info"]);
   }
 
-  // S6 — controlled release from buffer:
-  // the 6-HU order behaves like S3 at the pack table, but instead of using the active
-  // waiting loop as temporary storage, the interim-labelled parcels are buffered on a
-  // compact rack beside the relabeling area. Once the last parcel is packed, the rack
-  // releases the parcels one by one to the final labelling machine.
+  // S6 — automated HU buffer and sequenced final labelling.
+  // Packages receive only a technical interim ID at packing. A straight conveyor moves
+  // them through an identification portal into a carton-shuttle buffer. Once the full
+  // order is complete, the shuttle releases the HUs in sequence to a central print-and-apply cell.
   if (n === 6) {
-    duration = 58;
-    keyMessage = "Interim-labelled parcels for the 6-HU order are buffered on a compact rack and released one by one to the final labelling machine only after the full order is complete.";
-    const rackSlots6 = [
-      { x: MACHINE_X - 6.15, y: 0.78, z: -5.05 },
-      { x: MACHINE_X - 4.95, y: 0.78, z: -5.05 },
-      { x: MACHINE_X - 6.15, y: 1.62, z: -5.05 },
-      { x: MACHINE_X - 4.95, y: 1.62, z: -5.05 },
-      { x: MACHINE_X - 6.15, y: 2.46, z: -5.05 },
-      { x: MACHINE_X - 4.95, y: 2.46, z: -5.05 },
+    duration = 62;
+    keyMessage = "A carton-shuttle buffer decouples packing from final labelling. The 6-HU order is stored automatically and released in sequence only after all six packages are available.";
+
+    const ID_X = 6.5;
+    const DIVERT_X = 8.4;
+    const BUFFER_Z = -6.0;
+    const BUFFER_X = 10.8;
+    const SEQ_X = 13.2;
+    const LABEL_X = 15.8;
+    const bufferSlots = [
+      { x: BUFFER_X - 1.05, y: 0.82, z: BUFFER_Z },
+      { x: BUFFER_X, y: 0.82, z: BUFFER_Z },
+      { x: BUFFER_X + 1.05, y: 0.82, z: BUFFER_Z },
+      { x: BUFFER_X - 1.05, y: 1.72, z: BUFFER_Z },
+      { x: BUFFER_X, y: 1.72, z: BUFFER_Z },
+      { x: BUFFER_X + 1.05, y: 1.72, z: BUFFER_Z },
     ];
 
-    const addS3LikeOrder = (order, oi) => {
-      const completionBase = (order.count - 1) * 3.1 + oi * 0.45;
+    // 1- and 3-HU orders pass through the same identification and final-label architecture.
+    const addDirectAutomatedOrder = (order, oi) => {
       for (let i = 1; i <= order.count; i += 1) {
         const spawn = (i - 1) * 3.1 + oi * 0.45;
         const packEnd = spawn + 2.2;
         const interimT = packEnd + 0.2;
         const move = interimT + 0.35;
         const tEnter = move + 1.25;
-        const tArr = ride(tEnter, entryX(order.station), MACHINE_X);
-        const mustLoop = i < order.count;
-        let path = [...packPath(order.station, spawn, move), ...toConv(order.station, move, tEnter).slice(1), [tArr, MACHINE_X, CONV_Y, 0]];
-        let finalT = tArr + 1;
-        const loop = [];
-        if (mustLoop) {
-          path = path.concat([
-            [finalT + 0.6, MACHINE_X + 1.5, CONV_Y, 0],
-            [finalT + 2.3, MACHINE_X + 1.5, CONV_Y, -4.2],
-            [finalT + 5.5, MACHINE_X - 6.5, CONV_Y, -4.2],
-            [finalT + 7.2, MACHINE_X - 6.5, CONV_Y, 0],
-            [finalT + 9.8, MACHINE_X, CONV_Y, 0],
-          ]);
-          loop.push([finalT, finalT + 9.8]);
-          finalT += 10.8;
-        }
-        const tExit = ride(finalT + 0.2, MACHINE_X, CONV_END);
-        path.push([tExit, CONV_END, CONV_Y, 0]);
-        const d = base(order, i, { spawn, packEnd, interimT, move, tEnter, tArr });
+        const tId = ride(tEnter, entryX(order.station), ID_X);
+        const tLabel = ride(tId + 0.6, ID_X, LABEL_X);
+        const finalT = tLabel + 0.8;
+        const tExit = ride(finalT + 0.2, LABEL_X, CONV_END);
+        const d = base(order, i, { spawn, packEnd, interimT, move, tEnter, tArr: tLabel });
         parcels.push({
           ...d,
-          path,
+          path: [
+            ...packPath(order.station, spawn, move),
+            ...toConv(order.station, move, tEnter).slice(1),
+            [tId, ID_X, CONV_Y, 0],
+            [tLabel, LABEL_X, CONV_Y, 0],
+            [finalT, LABEL_X, CONV_Y, 0],
+            [tExit, CONV_END, CONV_Y, 0],
+          ],
           seq: `${i}/${order.count}`,
           finalT,
-          labels: [[interimT, "INTERIM", C.blue, d.id], [finalT, `${i}/${order.count}`, C.green, "final label"]],
+          labels: [[interimT, "HU-ID", C.blue, d.id], [finalT, `${i}/${order.count}`, C.green, "final label"]],
           conveyor: [tEnter, tExit],
-          loop,
-          stagingIv: null,
-          relabelIv: null,
+          loop: [], stagingIv: null, relabelIv: null,
         });
-        scans.push(tArr, ...(mustLoop ? [finalT - 1] : []));
+        scans.push(tId, tLabel);
       }
-      messages.push([completionBase + 2.5, `Order ${order.key}: ${order.count}/${order.count} parcels registered — final labels available`, "ok"]);
     };
+    addDirectAutomatedOrder(ORDERS[1], 1);
+    addDirectAutomatedOrder(ORDERS[2], 2);
 
-    // Orders B and A remain pure S3 flow.
-    addS3LikeOrder(ORDERS[1], 1);
-    addS3LikeOrder(ORDERS[2], 2);
-
-    // Order C (6 parcels) uses the compact buffer rack near the relabel area.
+    // 6-HU order: straight identification, right-angle divert into AS/RS buffer,
+    // sequenced release, then straight final-label cell.
     const order = ORDERS[0];
-    const oi = 0;
-    const completion = (order.count - 1) * 3.1 + oi * 0.45 + 4.0;
+    const completion = (order.count - 1) * 3.1 + 4.0;
     for (let i = 1; i <= order.count; i += 1) {
-      const spawn = (i - 1) * 3.1 + oi * 0.45;
+      const spawn = (i - 1) * 3.1;
       const packEnd = spawn + 2.2;
       const interimT = packEnd + 0.2;
       const move = interimT + 0.35;
       const tEnter = move + 1.25;
-      const tMerge = ride(tEnter, entryX(order.station), MACHINE_X - 0.8);
-      const tDivert = tMerge + 1.0;
-      const tBufferLane = tDivert + 2.8;
-      const tRackFront = tBufferLane + 1.6;
-      const s = rackSlots6[i - 1];
-      const stageIn = tRackFront + 1.8;
-      const release = completion + 2.0 + (i - 1) * 1.25;
-      const tRackExit = release + 1.4;
-      const tReleaseLane = tRackExit + 1.8;
-      const tGate = tReleaseLane + 1.3;
-      const toScanner = tGate + 1.7;
-      const finalT = toScanner + 0.9;
-      const tExit = ride(finalT + 0.2, MACHINE_X, CONV_END);
-      const d = base(order, i, { spawn, packEnd, interimT, move, tEnter, stageIn, release, tArr: toScanner });
+      const tId = ride(tEnter, entryX(order.station), ID_X);
+      const tDivert = ride(tId + 0.5, ID_X, DIVERT_X);
+      const tBufferAisle = tDivert + 2.4;
+      const tSlotFront = tBufferAisle + 1.2;
+      const slot = bufferSlots[i - 1];
+      const stageIn = tSlotFront + 1.0;
+      const release = completion + 2.0 + (i - 1) * 1.15;
+      const tShuttleOut = release + 1.0;
+      const tSequenceLane = tShuttleOut + 1.4;
+      const tGate = tSequenceLane + 1.2;
+      const tLabel = tGate + 1.7;
+      const finalT = tLabel + 0.8;
+      const tExit = ride(finalT + 0.2, LABEL_X, CONV_END);
+      const d = base(order, i, { spawn, packEnd, interimT, move, tEnter, stageIn, release, tArr: tLabel });
       parcels.push({
         ...d,
         path: [
           ...packPath(order.station, spawn, move),
           ...toConv(order.station, move, tEnter).slice(1),
-          [tMerge, MACHINE_X - 0.8, CONV_Y, 0],
-          [tDivert, MACHINE_X - 0.8, CONV_Y, -2.1],
-          [tBufferLane, MACHINE_X - 3.2, CONV_Y, -4.2],
-          [tRackFront, MACHINE_X - 5.55, CONV_Y, -4.2],
-          [stageIn - 0.9, MACHINE_X - 5.55, s.y, -4.55],
-          [stageIn, s.x, s.y, s.z],
-          [release, s.x, s.y, s.z],
-          [tRackExit, MACHINE_X - 5.55, s.y, -4.55],
-          [tReleaseLane, MACHINE_X - 5.55, CONV_Y, -4.2],
-          [tGate, MACHINE_X - 2.2, CONV_Y, -4.2],
-          [toScanner, MACHINE_X, CONV_Y, 0],
-          [finalT, MACHINE_X, CONV_Y, 0],
+          [tId, ID_X, CONV_Y, 0],
+          [tDivert, DIVERT_X, CONV_Y, 0],
+          [tBufferAisle, DIVERT_X, CONV_Y, BUFFER_Z],
+          [tSlotFront, BUFFER_X, CONV_Y, BUFFER_Z],
+          [stageIn - 0.45, slot.x, slot.y, BUFFER_Z - 0.45],
+          [stageIn, slot.x, slot.y, slot.z],
+          [release, slot.x, slot.y, slot.z],
+          [tShuttleOut, slot.x, slot.y, BUFFER_Z - 0.45],
+          [tSequenceLane, SEQ_X, CONV_Y, BUFFER_Z],
+          [tGate, SEQ_X, CONV_Y, 0],
+          [tLabel, LABEL_X, CONV_Y, 0],
+          [finalT, LABEL_X, CONV_Y, 0],
           [tExit, CONV_END, CONV_Y, 0],
         ],
         seq: `${i}/${order.count}`,
         finalT,
-        labels: [[interimT, "INTERIM", C.blue, d.id], [finalT, `${i}/${order.count}`, C.green, "final label"]],
+        labels: [[interimT, "HU-ID", C.blue, d.id], [finalT, `${i}/${order.count}`, C.green, "final label"]],
         conveyor: [tEnter, tExit],
         loop: [],
         stagingIv: [stageIn, release],
         relabelIv: null,
       });
-      scans.push(toScanner);
+      scans.push(tId, tLabel);
     }
-    messages.push([0, "Alternative concept: the 6-HU order uses a compact buffer rack near the relabeling area instead of the active waiting loop", "info"]);
-    messages.push([7.5, "The 6-HU parcels receive interim labels and move into the buffer rack", "info"]);
-    messages.push([completion, "All 6 parcels are complete — controlled release starts from the buffer rack", "ok"]);
-    messages.push([completion + 2.8, "Parcels are sent one by one to the label machine, preventing congestion in the waiting loop", "ok"]);
+    messages.push([0, "Future-state architecture: technical HU identification at packing, automated carton-shuttle buffering and sequenced final labelling", "info"]);
+    messages.push([5.5, "Every package is identified, weighed and dimensioned at the identification portal", "info"]);
+    messages.push([9.5, "Order C packages are automatically stored in the HU buffer without occupying packing-space", "info"]);
+    messages.push([completion, "Order C complete: 6/6 HUs available — sequencing can begin", "ok"]);
+    messages.push([completion + 2.4, "The shuttle releases one HU at a time to the central print-and-apply label cell", "ok"]);
   }
 
   // Prepend the ORTEC-routed infeed for every packing scenario.
@@ -1755,74 +1750,87 @@ export default function SupplyChainSim() {
 
     // Large packing-area banner intentionally omitted.
 
-    // Larger controlled-release buffer beside the relabeling area for scenario 6.
+    // S6 future-state architecture: identification portal, carton-shuttle AS/RS buffer,
+    // sequencing gate and central print-and-apply label cell.
     const loopRackGroup = new THREE.Group();
+    const ID_X = 6.5, DIVERT_X = 8.4, BUFFER_Z = -6.0, BUFFER_X = 10.8, SEQ_X = 13.2, LABEL_X = 15.8;
+
+    // Identification portal with scanner, scale and dimensioning frame.
+    const idMat = mat(0x2f5a78, 0.42, 0.35);
+    const idLeft = new THREE.Mesh(new THREE.BoxGeometry(0.35, 2.8, 0.45), idMat);
+    const idRight = idLeft.clone();
+    idLeft.position.set(ID_X, 1.4, -1.05); idRight.position.set(ID_X, 1.4, 1.05);
+    const idBridge = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.55, 2.55), idMat);
+    idBridge.position.set(ID_X, 2.65, 0);
+    const idBeam = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.5), new THREE.MeshBasicMaterial({ color: C.blue, transparent: true, opacity: 0.20, side: THREE.DoubleSide }));
+    idBeam.position.set(ID_X, 1.35, 0); idBeam.rotation.y = Math.PI / 2;
+    const scalePlate = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 1.15), mat(0x3a4657, 0.45, 0.3));
+    scalePlate.position.set(ID_X, 0.72, 0);
+    loopRackGroup.add(idLeft, idRight, idBridge, idBeam, scalePlate);
+
+    // Straight divert conveyor into the automated buffer aisle.
+    const futureBeltMat = new THREE.MeshStandardMaterial({ color: 0x314459, roughness: 0.88 });
+    const divertLane = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.12, 6.0), futureBeltMat);
+    divertLane.position.set(DIVERT_X, 0.62, BUFFER_Z / 2);
+    const bufferCross = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.12, 1.15), futureBeltMat);
+    bufferCross.position.set((DIVERT_X + BUFFER_X) / 2 + 0.3, 0.62, BUFFER_Z);
+    loopRackGroup.add(divertLane, bufferCross);
+
+    // Two-sided carton-shuttle / mini-load buffer with six highlighted HU positions.
     const rackMat = mat(0x596879, 0.46, 0.34);
-    const rackX = MACHINE_X - 5.55;
-    const rackZ = -5.05;
-    const rackW = 2.75, rackD = 1.15, rackH = 3.15;
-    [[-rackW / 2, -rackD / 2], [rackW / 2, -rackD / 2], [-rackW / 2, rackD / 2], [rackW / 2, rackD / 2]].forEach(([dx, dz]) => {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.11, rackH, 0.11), rackMat);
-      post.position.set(rackX + dx, rackH / 2, rackZ + dz);
-      loopRackGroup.add(post);
+    const rackW = 4.6, rackD = 1.25, rackH = 3.35;
+    [-1, 1].forEach((side) => {
+      const z = BUFFER_Z + side * 1.45;
+      [[-rackW/2,-rackD/2],[rackW/2,-rackD/2],[-rackW/2,rackD/2],[rackW/2,rackD/2]].forEach(([dx,dz]) => {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.11, rackH, 0.11), rackMat);
+        post.position.set(BUFFER_X + dx, rackH/2, z + dz); loopRackGroup.add(post);
+      });
+      [0.18, 1.08, 1.98, 2.88].forEach((y) => {
+        const shelf = new THREE.Mesh(new THREE.BoxGeometry(rackW, 0.10, rackD), rackMat);
+        shelf.position.set(BUFFER_X, y, z); loopRackGroup.add(shelf);
+      });
     });
-    [0.18, 1.02, 1.86, 2.70].forEach((y) => {
-      const shelf = new THREE.Mesh(new THREE.BoxGeometry(rackW, 0.11, rackD), rackMat);
-      shelf.position.set(rackX, y, rackZ);
-      loopRackGroup.add(shelf);
-    });
-    [0.60, 1.44, 2.28].forEach((y) => {
-      [-0.60, 0.60].forEach((dx) => {
-        const slot = new THREE.Mesh(
-          new THREE.BoxGeometry(0.95, 0.06, 0.72),
-          new THREE.MeshBasicMaterial({ color: 0x33465d, transparent: true, opacity: 0.78 })
-        );
-        slot.position.set(rackX + dx, y, rackZ);
-        loopRackGroup.add(slot);
+    [0.64, 1.54].forEach((y) => {
+      [-1.05, 0, 1.05].forEach((dx) => {
+        const slot = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.06, 0.76), new THREE.MeshBasicMaterial({ color: 0x33465d, transparent: true, opacity: 0.80 }));
+        slot.position.set(BUFFER_X + dx, y, BUFFER_Z); loopRackGroup.add(slot);
       });
     });
 
-    // Dedicated buffer lane: the loop remains visually free while parcels wait in the rack.
-    const bufferLaneMat = new THREE.MeshStandardMaterial({ color: 0x314459, roughness: 0.88 });
-    const laneA = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.12, 4.25), bufferLaneMat);
-    laneA.position.set(MACHINE_X - 0.8, 0.62, -2.1);
-    const laneB = new THREE.Mesh(new THREE.BoxGeometry(4.85, 0.12, 1.1), bufferLaneMat);
-    laneB.position.set(MACHINE_X - 3.18, 0.62, -4.2);
-    loopRackGroup.add(laneA, laneB);
+    // Shuttle carriage in the centre aisle.
+    const shuttle = new THREE.Group();
+    const shuttleBase = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.18, 0.78), mat(0x5b7fa3, 0.38, 0.45));
+    shuttleBase.position.set(BUFFER_X, 0.75, BUFFER_Z);
+    const shuttleMast = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.55, 0.14), mat(0x6c8ba8, 0.38, 0.38));
+    shuttleMast.position.set(BUFFER_X, 1.72, BUFFER_Z);
+    shuttle.add(shuttleBase, shuttleMast); loopRackGroup.add(shuttle);
 
-    // Controlled release gate in front of the return path.
-    const gatePostL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.5, 0.16), mat(0x6c7887, 0.45, 0.35));
-    const gatePostR = gatePostL.clone();
-    gatePostL.position.set(MACHINE_X - 2.2, 0.75, -4.75);
-    gatePostR.position.set(MACHINE_X - 2.2, 0.75, -3.65);
-    const gateArm = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 1.05), mat(0xff8c42, 0.5, 0.2));
-    gateArm.position.set(MACHINE_X - 2.2, 1.18, -4.2);
-    loopRackGroup.add(gatePostL, gatePostR, gateArm);
+    // Sequencing conveyor and release gate back to the main line.
+    const seqLane = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.12, 6.0), futureBeltMat);
+    seqLane.position.set(SEQ_X, 0.62, BUFFER_Z / 2);
+    loopRackGroup.add(seqLane);
+    const gateL = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.65, 0.15), mat(0x6c7887, 0.45, 0.35));
+    const gateR = gateL.clone(); gateL.position.set(SEQ_X, 0.82, -0.78); gateR.position.set(SEQ_X, 0.82, 0.78);
+    const gateArm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 1.45), mat(0xff8c42, 0.5, 0.2));
+    gateArm.position.set(SEQ_X, 1.22, 0); loopRackGroup.add(gateL, gateR, gateArm);
 
-    // Direction arrows make the buffer route explicit.
-    const bufferArrows = [
-      [MACHINE_X - 0.8, -1.2, "down"],
-      [MACHINE_X - 0.8, -3.0, "down"],
-      [MACHINE_X - 2.1, -4.2, "left"],
-      [MACHINE_X - 4.2, -4.2, "left"],
-      [MACHINE_X - 4.2, -4.45, "right"],
-      [MACHINE_X - 2.8, -4.45, "right"],
-    ];
-    bufferArrows.forEach(([ax, az, dir]) => {
-      const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.34, 4), new THREE.MeshBasicMaterial({ color: C.blue }));
-      arrow.position.set(ax, 0.96, az);
-      if (dir === "down") arrow.rotation.x = Math.PI / 2;
-      if (dir === "left") arrow.rotation.z = Math.PI / 2;
-      if (dir === "right") arrow.rotation.z = -Math.PI / 2;
-      loopRackGroup.add(arrow);
-    });
+    // Central final-label cell: scanner, print-and-apply and camera verification.
+    const cellMat = mat(0x355b43, 0.40, 0.38);
+    const cL = new THREE.Mesh(new THREE.BoxGeometry(0.42, 3.1, 0.5), cellMat);
+    const cR = cL.clone(); cL.position.set(LABEL_X, 1.55, -1.15); cR.position.set(LABEL_X, 1.55, 1.15);
+    const cTop = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.7, 2.8), cellMat); cTop.position.set(LABEL_X, 2.85, 0);
+    const printHead = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.55, 0.55), mat(0x22303f, 0.42, 0.42));
+    printHead.position.set(LABEL_X, 1.7, -0.85);
+    const verifyCam = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, 0.45), mat(0x1d2732, 0.42, 0.42));
+    verifyCam.position.set(LABEL_X, 2.15, 0.85);
+    loopRackGroup.add(cL, cR, cTop, printHead, verifyCam);
 
-    // Compact dynamic status board: WAITING -> READY -> CONTROLLED RELEASE.
+    // Dynamic architecture status board.
     const bufferCv = document.createElement("canvas");
-    bufferCv.width = 420; bufferCv.height = 220;
+    bufferCv.width = 500; bufferCv.height = 250;
     const bufferTex = new THREE.CanvasTexture(bufferCv);
-    const bufferPanel = new THREE.Mesh(new THREE.PlaneGeometry(3.8, 2.0), new THREE.MeshBasicMaterial({ map: bufferTex }));
-    bufferPanel.position.set(rackX, 3.85, rackZ);
+    const bufferPanel = new THREE.Mesh(new THREE.PlaneGeometry(4.8, 2.4), new THREE.MeshBasicMaterial({ map: bufferTex }));
+    bufferPanel.position.set(BUFFER_X, 4.15, BUFFER_Z + 1.45);
     loopRackGroup.add(bufferPanel);
     let bufferStatusKey = "";
     function drawBufferStatus(stored, released) {
@@ -1830,19 +1838,19 @@ export default function SupplyChainSim() {
       if (bufferStatusKey === key) return;
       bufferStatusKey = key;
       const g = bufferCv.getContext("2d");
-      g.fillStyle = "#0a1018"; g.fillRect(0, 0, 420, 220);
-      g.strokeStyle = stored < 6 ? C.yellow : C.green; g.lineWidth = 6; g.strokeRect(3, 3, 414, 214);
-      g.fillStyle = "#e8edf4"; g.font = "bold 27px 'IBM Plex Mono', monospace"; g.textAlign = "center";
-      g.fillText("CONTROLLED BUFFER", 210, 42);
-      g.fillStyle = stored < 6 ? C.yellow : C.green; g.font = "bold 58px 'IBM Plex Mono', monospace";
-      g.fillText(`${stored}/6`, 210, 112);
+      g.fillStyle = "#0a1018"; g.fillRect(0,0,500,250);
+      g.strokeStyle = stored < 6 ? C.yellow : C.green; g.lineWidth = 6; g.strokeRect(3,3,494,244);
+      g.textAlign = "center"; g.fillStyle = "#e8edf4"; g.font = "bold 28px 'IBM Plex Mono', monospace";
+      g.fillText("AUTOMATED HU BUFFER",250,45);
+      g.fillStyle = stored < 6 ? C.yellow : C.green; g.font = "bold 62px 'IBM Plex Mono', monospace";
+      g.fillText(`${stored}/6`,250,122);
       g.font = "bold 20px 'IBM Plex Mono', monospace";
-      g.fillText(stored < 6 ? "WAITING FOR FULL ORDER" : released > 0 ? `RELEASING ${released}/6` : "ORDER COMPLETE · READY", 210, 158);
+      g.fillText(stored < 6 ? "BUFFERING ORDER C" : released > 0 ? `SEQUENCED RELEASE ${released}/6` : "ORDER COMPLETE · READY",250,170);
       g.fillStyle = "#8fa0b5"; g.font = "17px 'IBM Plex Mono', monospace";
-      g.fillText("Loop remains free for active flow", 210, 194);
+      g.fillText("Carton shuttle · Print & apply · Vision check",250,210);
       bufferTex.needsUpdate = true;
     }
-    drawBufferStatus(0, 0);
+    drawBufferStatus(0,0);
     propsOut.add(loopRackGroup);
 
     // Show the physical equipment required by the selected packing scenario.
@@ -1854,8 +1862,8 @@ export default function SupplyChainSim() {
     stagingGroups.forEach((group, idx) => {
       group.visible = scenario === 2 || (scenario === 4 && idx === 0);
     });
-    loopGroup.visible = scenario === 3 || scenario === 4 || scenario === 6;
-    machine.visible = scenario === 3 || scenario === 4 || scenario === 5 || scenario === 6;
+    loopGroup.visible = scenario === 3 || scenario === 4;
+    machine.visible = scenario === 3 || scenario === 4 || scenario === 5;
     relabelGroup.visible = scenario === 5;
     ortecGroup.visible = scenario === 5;
     loopRackGroup.visible = scenario === 6;
@@ -2698,7 +2706,7 @@ export default function SupplyChainSim() {
     3: "Packages receive interim labels and move directly to the conveyor. Final labels are applied later, including a scanner loop when required.",
     4: "Hybrid scenario: most parcels behave like S3, but the 6-HU station stages interim-labelled parcels until the order is complete and sends them together to the downstream label machine.",
     5: "Labels are created from the ORTEC packing proposal. Verification failures enter the correction loop and pass the scanner again.",
-    6: "Controlled-release concept: the 6-HU order uses a compact buffer rack near the relabeling area. Interim-labelled parcels are stored there until the order is complete and are then released one by one to the final labeling machine.",
+    6: "Future-state concept: packages receive a technical HU-ID, pass through an identification portal and are stored in an automated carton-shuttle buffer. Once all six HUs are available, they are released in sequence to a central print-and-apply label cell.",
   };
 
   const scenarioObjectives = {
@@ -2739,9 +2747,9 @@ export default function SupplyChainSim() {
     },
     6: {
       eyebrow: "THEORETICAL SCENARIO",
-      title: "Controlled release from buffer",
-      description: "This concept keeps the S3 interim-label flow, but replaces the large staging area and the congested waiting loop with a compact buffer rack beside the relabeling area.",
-      result: "Benefit: the loop stays free because the parcels wait in the rack and are released to final labeling only when capacity is available.",
+      title: "Automated HU buffer & sequencing",
+      description: "Packages are identified, weighed and dimensioned after packing and stored in an automated carton-shuttle buffer. When the order is complete, the system releases the HUs in a defined sequence to a central print-and-apply cell.",
+      result: "Benefit: no staging at the pack table, no waiting loop and reliable final labels from 1/6 to 6/6 after physical order completion.",
       accent: C.red,
     },
   };
