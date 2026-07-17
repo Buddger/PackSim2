@@ -1155,232 +1155,230 @@ function pgBuildScenarioData(mode) {
 }
 
 function ProcessGapSimulation({ onHome }) {
-  const [scenario, setScenario] = useState("old");
+  const mountRef = useRef(null);
+  const runtime = useRef({ t: 0, playing: false, speed: 1, mode: "old" });
+  const [mode, setMode] = useState("old");
   const [playing, setPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [speed, setSpeed] = useState(1);
+  const [hud, setHud] = useState({ clock: "10:00", message: "Choose a scenario and start the simulation", parcels: 0, dns: 0, cost: "—" });
+
+  useEffect(() => { runtime.current.playing = playing; }, [playing]);
+  useEffect(() => { runtime.current.speed = speed; }, [speed]);
+  useEffect(() => { runtime.current.mode = mode; runtime.current.t = 0; setPlaying(false); setHud({ clock: "10:00", message: mode === "old" ? "Old world selected — immediate delivery-note creation" : "Smart job selected — wait for both positions", parcels: 0, dns: 0, cost: "—" }); }, [mode]);
 
   useEffect(() => {
-    if (!playing) return undefined;
-    const timer = window.setInterval(() => {
-      setProgress((p) => {
-        const next = Math.min(100, p + 0.45 * speed);
-        if (next >= 100) setPlaying(false);
-        return next;
+    const mount = mountRef.current;
+    if (!mount) return undefined;
+    const W = Math.max(1, mount.clientWidth), H = Math.max(1, mount.clientHeight);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(W, H);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    mount.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(C.bg);
+    scene.fog = new THREE.Fog(C.bg, 45, 105);
+    const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 220);
+    const cam = { theta: -0.78, phi: 0.98, radius: 31, target: new THREE.Vector3(0, 1.2, 3.2) };
+    const applyCam = () => {
+      const sp = Math.sin(cam.phi), cp = Math.cos(cam.phi);
+      camera.position.set(cam.target.x + cam.radius * sp * Math.sin(cam.theta), cam.target.y + cam.radius * cp, cam.target.z + cam.radius * sp * Math.cos(cam.theta));
+      camera.lookAt(cam.target);
+    };
+    applyCam();
+
+    scene.add(new THREE.AmbientLight(0x8fa0b5, 0.58));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.55);
+    sun.position.set(-4, 22, 10); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); scene.add(sun);
+
+    const mat3 = (c, r = 0.72, m = 0.08) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m });
+    const addBox = (root, x, y, z, sx, sy, sz, c, r, m) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat3(c, r, m));
+      mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; root.add(mesh); return mesh;
+    };
+    const addSign = (root, text, color, x, y, z, scale = 2.6) => {
+      const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeLabelTexture(text, "", color), transparent: true, depthTest: false }));
+      spr.scale.set(scale, scale * 0.5, 1); spr.position.set(x, y, z); spr.renderOrder = 30; root.add(spr); return spr;
+    };
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(58, 34), mat3(0x101720, 0.98, 0));
+    floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+    const grid = new THREE.GridHelper(58, 29, 0x2b3949, 0x1c2733); grid.position.y = 0.02; scene.add(grid);
+
+    const staticRoot = new THREE.Group(); scene.add(staticRoot);
+    // Process areas left to right.
+    addBox(staticRoot, -20, 0.03, 7.2, 7.5, 0.06, 7.0, 0x15253a);
+    addBox(staticRoot, -10.8, 0.03, 7.2, 8.6, 0.06, 7.0, 0x2d2a18);
+    addBox(staticRoot, -1.0, 0.03, 2.0, 6.2, 0.06, 5.5, 0x202a38);
+    addBox(staticRoot, 7.0, 0.03, 1.5, 8.4, 0.06, 6.2, 0x16311f);
+    addBox(staticRoot, 17.0, 0.03, 1.5, 7.4, 0.06, 6.2, 0x2c2117);
+
+    addSign(staticRoot, "INBOUND / PUT-AWAY", C.blue, -20, 3.7, 7.2, 3.8);
+    addSign(staticRoot, "STORAGE & PICKING", C.yellow, -10.8, 4.2, 7.2, 3.9);
+    addSign(staticRoot, "DELIVERY NOTE CREATION", C.blue, -1.0, 3.3, 2.0, 4.1);
+    addSign(staticRoot, "PACKING AREA", C.green, 7.0, 3.6, 1.5, 3.1);
+    addSign(staticRoot, "SHIPPING", C.orange, 17.0, 3.6, 1.5, 2.6);
+
+    // Inbound station and put-away conveyor.
+    addBox(staticRoot, -21.6, 0.7, 7.2, 3.0, 1.4, 2.5, 0x5c6878);
+    addBox(staticRoot, -17.2, 0.55, 7.2, 5.5, 0.35, 1.2, 0x405064, 0.55, 0.18);
+    for (let x = -19.6; x <= -14.8; x += 0.7) {
+      const roller = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 1.0, 12), mat3(0x8b98a8, 0.4, 0.45));
+      roller.rotation.x = Math.PI / 2; roller.position.set(x, 0.76, 7.2); staticRoot.add(roller);
+    }
+    addSign(staticRoot, "GOODS RECEIPT", C.dim, -21.6, 2.4, 7.2, 2.4);
+
+    // Storage racks, one row with visible stock positions.
+    for (let i = 0; i < 5; i += 1) {
+      const x = -14.0 + i * 1.7;
+      [-0.55, 0.55].forEach((dz) => {
+        addBox(staticRoot, x, 1.55, 7.2 + dz, 0.12, 3.1, 0.12, 0x7d8997, 0.4, 0.25);
       });
-    }, 45);
-    return () => window.clearInterval(timer);
-  }, [playing, speed]);
+      [0.45, 1.45, 2.45].forEach((y) => addBox(staticRoot, x, y, 7.2, 1.55, 0.10, 1.3, 0x657282, 0.42, 0.22));
+    }
+    addSign(staticRoot, "ITEM A · ON STOCK", C.green, -12.5, 3.35, 6.0, 2.7);
+    addSign(staticRoot, "ITEM B · AFTER PUT-AWAY", C.orange, -9.0, 3.35, 8.4, 3.2);
 
-  const reset = () => {
-    setPlaying(false);
-    setProgress(0);
-  };
+    // Delivery-note job/printer.
+    addBox(staticRoot, -1.0, 0.85, 2.0, 1.8, 1.7, 1.4, 0x354557, 0.45, 0.18);
+    addBox(staticRoot, -1.0, 1.95, 2.0, 1.45, 0.12, 1.0, 0x182433, 0.38, 0.22);
+    addSign(staticRoot, "SMART DN JOB", C.blue, -1.0, 2.65, 2.0, 2.4);
 
-  const switchScenario = (next) => {
-    setScenario(next);
-    setPlaying(false);
-    setProgress(0);
-  };
+    // Packing table, packer, outbound conveyor.
+    addBox(staticRoot, 6.3, 1.02, 1.5, 3.0, 0.18, 1.8, 0x6b7887, 0.5, 0.22);
+    [[-1.15,-0.65],[1.15,-0.65],[-1.15,0.65],[1.15,0.65]].forEach(([dx,dz]) => addBox(staticRoot, 6.3+dx, 0.52, 1.5+dz, 0.12, 1.0, 0.12, 0x4c5967));
+    const packer = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.34, 1.05, 16), mat3(0x47627d)); body.position.y = 0.53; packer.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), mat3(0xd5a078, 0.85)); head.position.y = 1.28; packer.add(head);
+    packer.position.set(4.5, 0, 3.0); staticRoot.add(packer);
+    addBox(staticRoot, 10.8, 0.62, 1.5, 6.5, 0.32, 1.2, 0x465667, 0.52, 0.2);
+    for (let x = 8.0; x <= 13.5; x += 0.75) {
+      const roller = new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.13,1.0,12), mat3(0x8b98a8,0.42,0.4));
+      roller.rotation.x = Math.PI/2; roller.position.set(x,0.82,1.5); staticRoot.add(roller);
+    }
+    addBox(staticRoot, 17.2, 0.95, 1.5, 3.4, 1.9, 2.8, 0xa66a2f, 0.55, 0.08);
+    addSign(staticRoot, "OUTBOUND GATE", C.orange, 17.2, 2.6, 1.5, 2.5);
 
-  const phase = progress < 18 ? 0 : progress < 48 ? 1 : progress < 72 ? 2 : progress < 90 ? 3 : 4;
-  const minutes = Math.round(600 + (progress / 100) * 165);
-  const clock = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
-  const old = scenario === "old";
+    // Customer order board.
+    addBox(staticRoot, -20.0, 1.25, -4.2, 5.7, 2.5, 0.35, 0x1a2634, 0.5, 0.12);
+    addSign(staticRoot, "CUSTOMER ORDER · 10:00", C.blue, -20.0, 2.25, -4.0, 3.5);
+    addSign(staticRoot, "POS 10 · ITEM A · STOCK", C.green, -20.0, 1.45, -4.0, 3.1);
+    addSign(staticRoot, "POS 20 · ITEM B · INBOUND", C.orange, -20.0, 0.72, -4.0, 3.25);
 
-  const stages = old
-    ? [
-        { title: "10:00 · Order created", text: "One customer order with two positions.", tone: C.blue },
-        { title: "10:05 · DN 1 created", text: "Position 1 is already on stock, so the first delivery note is created immediately.", tone: C.red },
-        { title: "10:45 · Parcel 1 shipped", text: "Item A leaves in its own parcel.", tone: C.red },
-        { title: "12:00 · Position 2 available", text: "Item B completes inbound put-away and triggers DN 2.", tone: C.orange },
-        { title: "12:40 · Parcel 2 shipped", text: "A second parcel leaves separately. Result: two transport charges.", tone: C.red },
-      ]
-    : [
-        { title: "10:00 · Order created", text: "One customer order with two positions.", tone: C.blue },
-        { title: "10:05 · Creation job waits", text: "No delivery note is created while position 2 is still in inbound.", tone: C.yellow },
-        { title: "10:05–12:00 · Position 1 reserved", text: "Item A remains available for consolidation at the same shipping point.", tone: C.green },
-        { title: "12:00 · Both positions available", text: "The job creates one combined delivery note.", tone: C.green },
-        { title: "12:40 · One parcel shipped", text: "Both items fit into one parcel. Result: one transport charge.", tone: C.green },
-      ];
+    const actors = [];
+    const makeItem = (color, label) => {
+      const g = new THREE.Group();
+      addBox(g, 0, 0.24, 0, 0.65, 0.48, 0.5, color, 0.7, 0.04);
+      addSign(g, label, color, 0, 1.0, 0, 1.7); return g;
+    };
+    const makeParcel = (label, accent) => {
+      const g = new THREE.Group();
+      addBox(g, 0, 0.35, 0, 1.15, 0.7, 0.82, C.cardboard, 0.86, 0.02);
+      addBox(g, 0, 0.35, 0, 1.17, 0.15, 0.84, 0xa8753f, 0.8, 0.02);
+      addSign(g, label, accent, 0, 1.25, 0, 2.1); return g;
+    };
+    const makeDN = (label, accent) => {
+      const g = new THREE.Group();
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(0.85,1.05), new THREE.MeshBasicMaterial({ color:0xffffff, side:THREE.DoubleSide })); p.rotation.x=-Math.PI/2; g.add(p);
+      addSign(g,label,accent,0,0.45,0,1.7); return g;
+    };
+    const pathPos = (path,t) => {
+      if (t <= path[0][0]) return path[0];
+      for(let i=1;i<path.length;i++) { const a=path[i-1],b=path[i]; if(t<=b[0]) { const f=(t-a[0])/Math.max(.001,b[0]-a[0]); return [t,a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f,a[3]+(b[3]-a[3])*f]; } }
+      return path[path.length-1];
+    };
+    const rebuildActors = () => {
+      actors.forEach(a => { scene.remove(a.obj); a.obj.traverse(o=>{o.geometry?.dispose?.(); if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{m.map?.dispose?.();m.dispose?.();});}}); });
+      actors.length=0;
+      const add = (obj,start,end,path) => { obj.visible=false; scene.add(obj); actors.push({obj,start,end,path}); };
+      // Item A visible in storage from the beginning.
+      add(makeItem(C.green,"ITEM A"),0,runtime.current.mode==="old"?2.7:8.35,[[0,-12.5,0.75,6.4]]);
+      // Item B passes inbound and is put away two hours later.
+      add(makeItem(C.orange,"ITEM B"),0,8.4,[[0,-21.5,0.95,7.2],[6.0,-21.5,0.95,7.2],[7.0,-17.2,0.95,7.2],[8.0,-9.0,0.75,8.0]]);
+      if(runtime.current.mode==="old") {
+        add(makeDN("DELIVERY NOTE 1",C.red),0.75,2.2,[[.75,-1,1.8,2],[1.3,2.0,1.1,2],[2.2,5.2,1.2,1.5]]);
+        add(makeItem(C.green,"ITEM A"),1.5,3.2,[[1.5,-12.5,.75,6.4],[2.3,-3.5,.75,5.2],[3.2,6.0,1.45,1.5]]);
+        add(makeParcel("PARCEL 1",C.red),3.25,5.0,[[3.25,6.4,1.42,1.5],[4.0,10.5,1.08,1.5],[5.0,17.0,1.08,1.5]]);
+        add(makeDN("DELIVERY NOTE 2",C.red),8.15,9.15,[[8.15,-1,1.8,2],[8.65,2.0,1.1,2],[9.15,5.2,1.2,1.5]]);
+        add(makeItem(C.orange,"ITEM B"),8.25,9.75,[[8.25,-9.0,.75,8.0],[8.9,-3.5,.75,5.2],[9.75,6.5,1.45,1.5]]);
+        add(makeParcel("PARCEL 2",C.red),9.8,11.3,[[9.8,6.4,1.42,1.5],[10.45,10.5,1.08,1.5],[11.3,17.0,1.08,1.5]]);
+      } else {
+        add(makeItem(C.green,"ITEM A · RESERVED"),0.3,8.35,[[.3,-12.5,.75,6.4]]);
+        add(makeDN("1 COMBINED DELIVERY NOTE",C.green),8.15,9.25,[[8.15,-1,1.8,2],[8.7,2.0,1.1,2],[9.25,5.2,1.2,1.5]]);
+        add(makeItem(C.green,"ITEM A"),8.25,9.6,[[8.25,-12.5,.75,6.4],[8.8,-3.5,.75,5.2],[9.6,5.8,1.45,1.25]]);
+        add(makeItem(C.orange,"ITEM B"),8.35,9.7,[[8.35,-9.0,.75,8.0],[8.9,-3.5,.75,5.2],[9.7,6.9,1.45,1.75]]);
+        add(makeParcel("1 COMBINED PARCEL",C.green),9.85,11.25,[[9.85,6.4,1.42,1.5],[10.5,10.5,1.08,1.5],[11.25,17.0,1.08,1.5]]);
+      }
+    };
+    rebuildActors();
 
-  const itemAStage = old ? (progress < 20 ? "storage" : progress < 38 ? "packing" : "shipping") : progress < 72 ? "storage" : progress < 88 ? "packing" : "shipping";
-  const itemBStage = progress < 48 ? "inbound" : progress < 72 ? "storage" : progress < 88 ? "packing" : "shipping";
-  const parcelCount = old ? (progress < 38 ? 0 : progress < 82 ? 1 : 2) : progress < 88 ? 0 : 1;
-  const dnCount = old ? (progress < 18 ? 0 : progress < 72 ? 1 : 2) : progress < 72 ? 0 : 1;
+    let dragging=false,lx=0,ly=0;
+    const down=e=>{dragging=true;lx=e.clientX;ly=e.clientY;};
+    const move=e=>{if(!dragging)return;const dx=e.clientX-lx,dy=e.clientY-ly;lx=e.clientX;ly=e.clientY;cam.theta-=dx*.005;cam.phi=Math.min(1.42,Math.max(.3,cam.phi-dy*.005));applyCam();};
+    const up=()=>dragging=false;
+    const wheel=e=>{e.preventDefault();cam.radius=Math.min(55,Math.max(15,cam.radius*(1+e.deltaY*.001)));applyCam();};
+    renderer.domElement.addEventListener("mousedown",down);window.addEventListener("mousemove",move);window.addEventListener("mouseup",up);renderer.domElement.addEventListener("wheel",wheel,{passive:false});
 
-  const card = (accent, active = false) => ({
-    border: `1px solid ${active ? accent : C.line}`,
-    background: active ? `${accent}12` : C.panel2,
-    borderRadius: 12,
-    padding: 12,
-  });
+    const clock = new THREE.Clock(); let raf=0, lastMode=runtime.current.mode, hudAcc=0;
+    const tick=()=>{
+      const dt=Math.min(.05,clock.getDelta());
+      if(lastMode!==runtime.current.mode){lastMode=runtime.current.mode;rebuildActors();}
+      if(runtime.current.playing) runtime.current.t=Math.min(11.5,runtime.current.t+dt*runtime.current.speed);
+      const t=runtime.current.t;
+      actors.forEach(a=>{const vis=t>=a.start&&t<=a.end;a.obj.visible=vis;if(vis){const [,x,y,z]=pathPos(a.path,t);a.obj.position.set(x,y,z);}});
+      hudAcc+=dt;
+      if(hudAcc>.12){hudAcc=0;const mins=600+(t/11.5)*165;const h=Math.floor(mins/60),m=Math.floor(mins%60);let message="Customer order created with two positions";let parcels=0,dns=0,cost="—";
+        if(runtime.current.mode==="old"){
+          if(t>=.75){message="Delivery Note 1 created immediately for Item A";dns=1;} if(t>=5){message="Parcel 1 shipped while Item B is still in put-away";parcels=1;cost="1×";} if(t>=8.15){message="Item B available — Delivery Note 2 created";dns=2;} if(t>=11.3){message="Two parcels shipped · duplicate transport cost";parcels=2;cost="2×";}
+        } else {
+          if(t>=.75) message="Smart job holds delivery-note creation"; if(t>=8.0) message="Both positions available at the same shipping point"; if(t>=8.15){message="One combined delivery note created";dns=1;} if(t>=11.25){message="Both items shipped in one parcel · one transport cost";parcels=1;cost="1×";}
+        }
+        setHud({clock:`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`,message,parcels,dns,cost});setPlaying(runtime.current.playing);
+      }
+      renderer.render(scene,camera);raf=requestAnimationFrame(tick);
+    };tick();
+    const resize=()=>{const w=mount.clientWidth,h=mount.clientHeight;camera.aspect=w/Math.max(1,h);camera.updateProjectionMatrix();renderer.setSize(w,h);};window.addEventListener("resize",resize);
+    return()=>{cancelAnimationFrame(raf);window.removeEventListener("resize",resize);window.removeEventListener("mousemove",move);window.removeEventListener("mouseup",up);renderer.domElement.removeEventListener("mousedown",down);renderer.domElement.removeEventListener("wheel",wheel);scene.traverse(o=>{o.geometry?.dispose?.();if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{m.map?.dispose?.();m.dispose?.();});}});renderer.dispose();renderer.domElement.remove();};
+  }, []);
 
-  const areaStyle = (accent) => ({
-    border: `1px solid ${accent}88`,
-    background: `${accent}0d`,
-    borderRadius: 14,
-    minHeight: 122,
-    padding: 12,
-    position: "relative",
-    overflow: "hidden",
-  });
-
-  const flowItem = (label, accent, visible = true) => ({
-    opacity: visible ? 1 : 0.16,
-    border: `1px solid ${accent}`,
-    background: `${accent}20`,
-    color: accent,
-    borderRadius: 8,
-    padding: "7px 9px",
-    fontSize: 12,
-    fontWeight: 800,
-    transition: "all .35s ease",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-  });
-
+  const reset=()=>{runtime.current.t=0;runtime.current.playing=false;setPlaying(false);setHud({clock:"10:00",message:mode==="old"?"Old world selected — immediate delivery-note creation":"Smart job selected — wait for both positions",parcels:0,dns:0,cost:"—"});};
+  const choose=(next)=>{runtime.current.mode=next;setMode(next);};
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Space Grotesk', system-ui, sans-serif", padding: 16, overflowY: "auto" }}>
-      <style>{`
-        * { box-sizing: border-box; }
-        .pg-grid { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:14px; }
-        .pg-flow { display:grid; grid-template-columns:repeat(5,minmax(130px,1fr)); gap:10px; align-items:stretch; }
-        .pg-arrow { display:flex; align-items:center; justify-content:center; color:${C.dim}; font-size:22px; }
-        @media(max-width:1050px){ .pg-grid{grid-template-columns:1fr;} }
-        @media(max-width:820px){ .pg-flow{grid-template-columns:1fr;} .pg-arrow{transform:rotate(90deg); min-height:22px;} }
-      `}</style>
-
-      <div style={{ maxWidth: 1500, margin: "0 auto" }}>
-        <header style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
-          <div>
-            <div style={{ color: C.yellow, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 800, letterSpacing: 1.2 }}>PROCESS GAP SIMULATION</div>
-            <h1 style={{ margin: "5px 0 4px", fontSize: "clamp(25px,4vw,38px)" }}>Same-Day & Same Shipping Point</h1>
-            <div style={{ color: C.dim, maxWidth: 900 }}>One customer order with two positions: one item is already on stock, while the second item becomes available after inbound put-away.</div>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <div style={{ ...card(C.orange, true), minWidth: 116, textAlign: "center" }}>
-              <div style={{ color: C.dim, fontSize: 9, letterSpacing: 1 }}>SIMULATION TIME</div>
-              <div style={{ fontSize: 21, fontWeight: 800 }}>{clock}</div>
-            </div>
-            <button onClick={onHome} style={{ border: `1px solid ${C.line}`, background: C.panel2, color: C.text, borderRadius: 10, padding: "10px 13px", cursor: "pointer", fontWeight: 700 }}>← Home</button>
-          </div>
-        </header>
-
-        <div className="pg-grid">
-          <main style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <section style={{ ...card(old ? C.red : C.green, true), padding: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-                <div>
-                  <div style={{ color: old ? C.red : C.green, fontSize: 11, fontWeight: 800, letterSpacing: 1.1 }}>{old ? "OLD WORLD" : "SMART DELIVERY NOTE CREATION JOB"}</div>
-                  <div style={{ fontSize: 20, fontWeight: 800, marginTop: 4 }}>{old ? "Immediate creation causes a split shipment" : "Controlled creation consolidates both positions"}</div>
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <button onClick={() => switchScenario("old")} style={{ border: `1px solid ${scenario === "old" ? C.red : C.line}`, background: scenario === "old" ? `${C.red}18` : C.panel, color: scenario === "old" ? C.red : C.text, borderRadius: 9, padding: "9px 11px", cursor: "pointer", fontWeight: 800 }}>Old World</button>
-                  <button onClick={() => switchScenario("smart")} style={{ border: `1px solid ${scenario === "smart" ? C.green : C.line}`, background: scenario === "smart" ? `${C.green}18` : C.panel, color: scenario === "smart" ? C.green : C.text, borderRadius: 9, padding: "9px 11px", cursor: "pointer", fontWeight: 800 }}>Smart Job</button>
-                </div>
-              </div>
-            </section>
-
-            <section style={{ ...card(C.blue), padding: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
-                <div>
-                  <div style={{ fontWeight: 800 }}>Customer Order 4711</div>
-                  <div style={{ color: C.dim, fontSize: 13 }}>Created at 10:00 · Same shipping point · Both articles fit into one parcel</div>
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <span style={flowItem("", C.green)}>Position 10 · Item A · On stock</span>
-                  <span style={flowItem("", C.orange)}>Position 20 · Item B · Inbound</span>
-                </div>
-              </div>
-
-              <div className="pg-flow">
-                <div style={areaStyle(C.blue)}>
-                  <div style={{ color: C.blue, fontSize: 10, fontWeight: 800, letterSpacing: 1 }}>CUSTOMER ORDER</div>
-                  <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
-                    <div style={flowItem("", C.green)}>Item A</div>
-                    <div style={flowItem("", C.orange)}>Item B</div>
-                  </div>
-                </div>
-                <div className="pg-arrow">→</div>
-                <div style={areaStyle(C.orange)}>
-                  <div style={{ color: C.orange, fontSize: 10, fontWeight: 800, letterSpacing: 1 }}>INBOUND / STORAGE</div>
-                  <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
-                    <div style={flowItem("", C.green, itemAStage === "storage")}>Item A · stored</div>
-                    <div style={flowItem("", C.orange, itemBStage === "inbound")}>Item B · put-away</div>
-                    <div style={flowItem("", C.orange, itemBStage === "storage")}>Item B · stored</div>
-                  </div>
-                </div>
-                <div className="pg-arrow">→</div>
-                <div style={areaStyle(C.yellow)}>
-                  <div style={{ color: C.yellow, fontSize: 10, fontWeight: 800, letterSpacing: 1 }}>DELIVERY NOTE CREATION</div>
-                  <div style={{ marginTop: 17, fontSize: 34, fontWeight: 900 }}>{dnCount}</div>
-                  <div style={{ color: C.dim, fontSize: 12 }}>{dnCount === 1 ? "delivery note" : "delivery notes"}</div>
-                  {!old && progress < 72 && <div style={{ marginTop: 8, color: C.yellow, fontSize: 11, fontWeight: 700 }}>Job waits for both positions</div>}
-                </div>
-                <div className="pg-arrow">→</div>
-                <div style={areaStyle(C.green)}>
-                  <div style={{ color: C.green, fontSize: 10, fontWeight: 800, letterSpacing: 1 }}>PACKING & SHIPPING</div>
-                  <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
-                    <div style={flowItem("", C.purple, parcelCount >= 1)}>Parcel {old ? "1" : "1 combined"}</div>
-                    {old && <div style={flowItem("", C.red, parcelCount >= 2)}>Parcel 2</div>}
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section style={{ ...card(C.line), padding: 14 }}>
-              <div style={{ height: 8, borderRadius: 999, background: C.panel2, overflow: "hidden", marginBottom: 12 }}>
-                <div style={{ height: "100%", width: `${progress}%`, background: old ? C.red : C.green, transition: "width .08s linear" }} />
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 8 }}>
-                {stages.map((s, i) => (
-                  <div key={s.title} style={{ ...card(s.tone, i <= phase), minHeight: 112 }}>
-                    <div style={{ color: i <= phase ? s.tone : C.dim, fontSize: 11, fontWeight: 800 }}>{s.title}</div>
-                    <div style={{ color: C.dim, fontSize: 12, lineHeight: 1.45, marginTop: 7 }}>{s.text}</div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          </main>
-
-          <aside style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <section style={{ ...card(C.line), padding: 14 }}>
-              <div style={{ color: C.dim, fontSize: 10, letterSpacing: 1, marginBottom: 10 }}>CONTROLS</div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                <button onClick={() => setPlaying((v) => !v)} style={{ border: `1px solid ${playing ? C.orange : C.green}`, background: playing ? `${C.orange}18` : `${C.green}18`, color: playing ? C.orange : C.green, borderRadius: 9, padding: "10px 13px", cursor: "pointer", fontWeight: 800, flex: 1 }}>{playing ? "Pause" : progress >= 100 ? "Replay" : "Start"}</button>
-                <button onClick={reset} style={{ border: `1px solid ${C.line}`, background: C.panel2, color: C.text, borderRadius: 9, padding: "10px 13px", cursor: "pointer", fontWeight: 700 }}>Reset</button>
-              </div>
-              <label style={{ color: C.dim, fontSize: 12, display: "grid", gap: 6 }}>
-                Simulation speed
-                <input type="range" min="0.6" max="2" step="0.1" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} />
-              </label>
-            </section>
-
-            <section style={{ ...card(old ? C.red : C.green, true), padding: 14 }}>
-              <div style={{ color: C.dim, fontSize: 10, letterSpacing: 1, marginBottom: 10 }}>BUSINESS IMPACT</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                {[
-                  ["Delivery notes", old ? 2 : 1],
-                  ["Parcels", old ? 2 : 1],
-                  ["Transport cost", old ? "2×" : "1×"],
-                  ["Consolidation", old ? "No" : "Yes"],
-                ].map(([l, v]) => <div key={l} style={card(C.line)}><div style={{ color: C.dim, fontSize: 10 }}>{l}</div><div style={{ fontSize: 23, fontWeight: 900, marginTop: 5 }}>{v}</div></div>)}
-              </div>
-            </section>
-
-            <section style={{ ...card(C.line), padding: 14 }}>
-              <div style={{ color: C.dim, fontSize: 10, letterSpacing: 1, marginBottom: 10 }}>CORE MESSAGE</div>
-              <div style={{ color: old ? C.red : C.green, fontWeight: 800, fontSize: 17, marginBottom: 8 }}>{old ? "Early creation splits the customer order." : "Delayed creation preserves consolidation."}</div>
-              <div style={{ color: C.dim, lineHeight: 1.55, fontSize: 13 }}>{old ? "The first available position triggers a delivery note before the second position completes put-away. The result is two parcels and two transport charges." : "The creation job waits until both positions are physically available at the same shipping point. One delivery note and one parcel are created."}</div>
-            </section>
-          </aside>
+    <div style={{position:"absolute",inset:0,background:C.bg,color:C.text,fontFamily:"'Space Grotesk',system-ui,sans-serif",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <div style={{minHeight:66,padding:"10px 14px",borderBottom:`1px solid ${C.line}`,display:"flex",alignItems:"center",gap:12,background:C.panel}}>
+        <div style={{marginRight:"auto"}}><div style={{fontSize:18,fontWeight:800}}>Process Gap Simulation · Same-Day & Same Shipping Point</div><div style={{fontSize:11,color:C.dim,fontFamily:"'IBM Plex Mono',monospace",marginTop:3}}>One customer order · two positions · one shipping point · 3D warehouse view</div></div>
+        <div style={{padding:"7px 11px",border:`1px solid ${C.orange}`,borderRadius:8,background:"rgba(255,140,66,.08)",textAlign:"center",minWidth:105}}><div style={{fontSize:8,color:C.dim,letterSpacing:1}}>SIMULATION TIME</div><div style={{fontSize:18,fontWeight:900}}>{hud.clock}</div></div>
+        <button style={btn(false)} onClick={onHome}>⌂ Home</button>
+      </div>
+      <div style={{flex:1,position:"relative",minHeight:0}}>
+        <div ref={mountRef} style={{position:"absolute",inset:0}} />
+        <div style={{position:"absolute",top:12,left:12,width:350,maxWidth:"calc(100% - 300px)",background:"rgba(13,18,25,.94)",border:`1px solid ${mode==="old"?C.red:C.green}`,borderRadius:11,padding:"12px 14px"}}>
+          <div style={{color:mode==="old"?C.red:C.green,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:800,letterSpacing:1}}>{mode==="old"?"OLD WORLD":"SMART DELIVERY NOTE CREATION JOB"}</div>
+          <div style={{fontSize:16,fontWeight:800,margin:"6px 0"}}>{mode==="old"?"Immediate creation causes a split shipment":"Wait for both positions and consolidate"}</div>
+          <div style={{fontSize:12,color:C.dim,lineHeight:1.5}}>{hud.message}</div>
         </div>
+        <div style={{position:"absolute",top:12,right:12,width:260,display:"grid",gap:9}}>
+          <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
+            <div style={{fontSize:9,color:C.dim,letterSpacing:1,marginBottom:8}}>SCENARIO</div>
+            <button onClick={()=>choose("old")} style={{...btn(mode==="old"),width:"100%",marginBottom:7,borderColor:C.red,color:mode==="old"?C.bg:C.red,background:mode==="old"?C.red:"transparent"}}>Old world</button>
+            <button onClick={()=>choose("smart")} style={{...btn(mode==="smart"),width:"100%",borderColor:C.green,color:mode==="smart"?C.bg:C.green,background:mode==="smart"?C.green:"transparent"}}>Smart DN Job</button>
+          </div>
+          <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
+            <div style={{display:"flex",gap:7}}><button onClick={()=>{runtime.current.playing=!runtime.current.playing;setPlaying(runtime.current.playing);}} style={{...btn(true),flex:1,background:playing?C.orange:C.green,borderColor:playing?C.orange:C.green,color:C.bg}}>{playing?"Pause":"Start"}</button><button onClick={reset} style={btn(false)}>Reset</button></div>
+            <label style={{display:"flex",alignItems:"center",gap:7,marginTop:9,fontSize:11,color:C.dim}}>Speed<input type="range" min="0.6" max="2" step="0.1" value={speed} onChange={e=>{const v=Number(e.target.value);runtime.current.speed=v;setSpeed(v);}}/><span>{speed.toFixed(1)}×</span></label>
+          </div>
+          <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
+            <div style={{fontSize:9,color:C.dim,letterSpacing:1,marginBottom:8}}>BUSINESS IMPACT</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>{[["Delivery notes",hud.dns],["Parcels",hud.parcels],["Transport cost",hud.cost],["Result",mode==="old"?"Split":"Combined"]].map(([l,v])=><div key={l} style={{background:C.panel2,border:`1px solid ${C.line}`,borderRadius:8,padding:8}}><div style={{fontSize:9,color:C.dim}}>{l}</div><div style={{fontSize:18,fontWeight:900,marginTop:3}}>{v}</div></div>)}</div>
+          </div>
+        </div>
+        <div style={{position:"absolute",left:12,bottom:12,padding:"7px 10px",background:"rgba(13,18,25,.88)",border:`1px solid ${C.line}`,borderRadius:8,color:C.dim,fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>Drag to rotate · Scroll to zoom</div>
       </div>
     </div>
   );
 }
+
 
 export default function SupplyChainSim() {
   const mountRef = useRef(null);
