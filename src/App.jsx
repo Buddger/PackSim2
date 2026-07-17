@@ -1160,17 +1160,43 @@ function ProcessGapSimulation({ onHome }) {
   const [mode, setMode] = useState("old");
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [hud, setHud] = useState({ clock: "10:00", message: "Choose a scenario and start the simulation", parcels: 0, dns: 0, cost: "—" });
+  const [hud, setHud] = useState({
+    clock: "10:00",
+    message: "Customer order created with two positions",
+    itemA: "Available in storage",
+    itemB: "Waiting in inbound",
+    dn: "Not created",
+    parcels: 0,
+    cost: "—",
+    phase: "Order created",
+  });
 
   useEffect(() => { runtime.current.playing = playing; }, [playing]);
   useEffect(() => { runtime.current.speed = speed; }, [speed]);
-  useEffect(() => { runtime.current.mode = mode; runtime.current.t = 0; setPlaying(false); setHud({ clock: "10:00", message: mode === "old" ? "Old world selected — immediate delivery-note creation" : "Smart job selected — wait for both positions", parcels: 0, dns: 0, cost: "—" }); }, [mode]);
+  useEffect(() => {
+    runtime.current.mode = mode;
+    runtime.current.t = 0;
+    runtime.current.playing = false;
+    setPlaying(false);
+    setHud({
+      clock: "10:00",
+      message: mode === "old" ? "Immediate delivery-note creation is active" : "Smart job waits for both positions",
+      itemA: "Available in storage",
+      itemB: "Waiting in inbound",
+      dn: "Not created",
+      parcels: 0,
+      cost: "—",
+      phase: "Order created",
+    });
+  }, [mode]);
 
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return undefined;
-    const W = Math.max(1, mount.clientWidth), H = Math.max(1, mount.clientHeight);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+
+    const W = Math.max(1, mount.clientWidth);
+    const H = Math.max(1, mount.clientHeight);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(W, H);
     renderer.shadowMap.enabled = true;
@@ -1179,167 +1205,263 @@ function ProcessGapSimulation({ onHome }) {
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(C.bg);
-    scene.fog = new THREE.Fog(C.bg, 45, 105);
-    const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 220);
-    const cam = { theta: -0.78, phi: 0.98, radius: 31, target: new THREE.Vector3(0, 1.2, 3.2) };
+    scene.fog = new THREE.Fog(C.bg, 36, 86);
+
+    const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 180);
+    const cam = { theta: -0.72, phi: 0.96, radius: 29, target: new THREE.Vector3(0, 1.1, 1.6) };
     const applyCam = () => {
       const sp = Math.sin(cam.phi), cp = Math.cos(cam.phi);
-      camera.position.set(cam.target.x + cam.radius * sp * Math.sin(cam.theta), cam.target.y + cam.radius * cp, cam.target.z + cam.radius * sp * Math.cos(cam.theta));
+      camera.position.set(
+        cam.target.x + cam.radius * sp * Math.sin(cam.theta),
+        cam.target.y + cam.radius * cp,
+        cam.target.z + cam.radius * sp * Math.cos(cam.theta)
+      );
       camera.lookAt(cam.target);
     };
     applyCam();
 
-    scene.add(new THREE.AmbientLight(0x8fa0b5, 0.58));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.55);
-    sun.position.set(-4, 22, 10); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); scene.add(sun);
+    scene.add(new THREE.HemisphereLight(0xd8e4f2, 0x18202b, 1.25));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.75);
+    sun.position.set(-8, 20, 12);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    scene.add(sun);
 
-    const mat3 = (c, r = 0.72, m = 0.08) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: m });
-    const addBox = (root, x, y, z, sx, sy, sz, c, r, m) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat3(c, r, m));
-      mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; root.add(mesh); return mesh;
+    const mat3 = (color, roughness = 0.72, metalness = 0.08) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
+    const addBox = (root, x, y, z, sx, sy, sz, color, roughness, metalness) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat3(color, roughness, metalness));
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      root.add(mesh);
+      return mesh;
     };
-    const addSign = (root, text, color, x, y, z, scale = 2.6) => {
-      const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeLabelTexture(text, "", color), transparent: true, depthTest: false }));
-      spr.scale.set(scale, scale * 0.5, 1); spr.position.set(x, y, z); spr.renderOrder = 30; root.add(spr); return spr;
+    const addSmallSign = (root, textValue, color, x, y, z, scale = 2.2) => {
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeLabelTexture(textValue, "", color), transparent: true, depthTest: false }));
+      sprite.scale.set(scale, scale * 0.46, 1);
+      sprite.position.set(x, y, z);
+      sprite.renderOrder = 20;
+      root.add(sprite);
+      return sprite;
     };
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(58, 34), mat3(0x101720, 0.98, 0));
-    floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
-    const grid = new THREE.GridHelper(58, 29, 0x2b3949, 0x1c2733); grid.position.y = 0.02; scene.add(grid);
 
-    const staticRoot = new THREE.Group(); scene.add(staticRoot);
-    // Process areas left to right.
-    addBox(staticRoot, -20, 0.03, 7.2, 7.5, 0.06, 7.0, 0x15253a);
-    addBox(staticRoot, -10.8, 0.03, 7.2, 8.6, 0.06, 7.0, 0x2d2a18);
-    addBox(staticRoot, -1.0, 0.03, 2.0, 6.2, 0.06, 5.5, 0x202a38);
-    addBox(staticRoot, 7.0, 0.03, 1.5, 8.4, 0.06, 6.2, 0x16311f);
-    addBox(staticRoot, 17.0, 0.03, 1.5, 7.4, 0.06, 6.2, 0x2c2117);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(48, 25), mat3(0x101720, 0.98, 0));
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+    const grid = new THREE.GridHelper(48, 24, 0x2a3747, 0x1b2530);
+    grid.position.y = 0.02;
+    scene.add(grid);
 
-    addSign(staticRoot, "INBOUND / PUT-AWAY", C.blue, -20, 3.7, 7.2, 3.8);
-    addSign(staticRoot, "STORAGE & PICKING", C.yellow, -10.8, 4.2, 7.2, 3.9);
-    addSign(staticRoot, "DELIVERY NOTE CREATION", C.blue, -1.0, 3.3, 2.0, 4.1);
-    addSign(staticRoot, "PACKING AREA", C.green, 7.0, 3.6, 1.5, 3.1);
-    addSign(staticRoot, "SHIPPING", C.orange, 17.0, 3.6, 1.5, 2.6);
+    const root = new THREE.Group();
+    scene.add(root);
 
-    // Inbound station and put-away conveyor.
-    addBox(staticRoot, -21.6, 0.7, 7.2, 3.0, 1.4, 2.5, 0x5c6878);
-    addBox(staticRoot, -17.2, 0.55, 7.2, 5.5, 0.35, 1.2, 0x405064, 0.55, 0.18);
-    for (let x = -19.6; x <= -14.8; x += 0.7) {
-      const roller = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 1.0, 12), mat3(0x8b98a8, 0.4, 0.45));
-      roller.rotation.x = Math.PI / 2; roller.position.set(x, 0.76, 7.2); staticRoot.add(roller);
+    // Four clean process zones.
+    addBox(root, -15.0, 0.03, 5.0, 7.0, 0.06, 6.2, 0x14283a);
+    addBox(root, -5.5, 0.03, 5.0, 8.0, 0.06, 6.2, 0x302b18);
+    addBox(root, 5.0, 0.03, 1.2, 8.5, 0.06, 6.2, 0x16311f);
+    addBox(root, 15.0, 0.03, 1.2, 7.0, 0.06, 6.2, 0x2b2117);
+
+    // Inbound dock and put-away conveyor.
+    addBox(root, -16.0, 0.75, 5.1, 3.0, 1.5, 2.6, 0x52667a);
+    addBox(root, -12.2, 0.55, 5.1, 4.8, 0.34, 0.95, 0x3d4a58);
+    addSmallSign(root, "INBOUND PUT-AWAY", C.blue, -14.2, 2.8, 5.0, 2.8);
+
+    // Storage rack with two visible locations.
+    for (let i = 0; i < 4; i += 1) {
+      const x = -8.2 + i * 1.65;
+      addBox(root, x, 1.6, 5.0, 1.1, 3.2, 0.72, 0x657385);
+      [0.55, 1.5, 2.45].forEach((y) => addBox(root, x, y, 5.0, 1.2, 0.08, 0.82, 0x8793a1));
     }
-    addSign(staticRoot, "GOODS RECEIPT", C.dim, -21.6, 2.4, 7.2, 2.4);
+    addSmallSign(root, "STORAGE", C.yellow, -5.7, 3.5, 5.0, 2.1);
 
-    // Storage racks, one row with visible stock positions.
-    for (let i = 0; i < 5; i += 1) {
-      const x = -14.0 + i * 1.7;
-      [-0.55, 0.55].forEach((dz) => {
-        addBox(staticRoot, x, 1.55, 7.2 + dz, 0.12, 3.1, 0.12, 0x7d8997, 0.4, 0.25);
-      });
-      [0.45, 1.45, 2.45].forEach((y) => addBox(staticRoot, x, y, 7.2, 1.55, 0.10, 1.3, 0x657282, 0.42, 0.22));
-    }
-    addSign(staticRoot, "ITEM A · ON STOCK", C.green, -12.5, 3.35, 6.0, 2.7);
-    addSign(staticRoot, "ITEM B · AFTER PUT-AWAY", C.orange, -9.0, 3.35, 8.4, 3.2);
+    // One simple delivery-note station, packing table and straight outbound conveyor.
+    addBox(root, 0.8, 0.65, 1.2, 1.15, 1.3, 0.95, 0x354454);
+    addSmallSign(root, "DN CREATION", C.dim, 0.8, 2.35, 1.2, 1.9);
 
-    // Delivery-note job/printer.
-    addBox(staticRoot, -1.0, 0.85, 2.0, 1.8, 1.7, 1.4, 0x354557, 0.45, 0.18);
-    addBox(staticRoot, -1.0, 1.95, 2.0, 1.45, 0.12, 1.0, 0x182433, 0.38, 0.22);
-    addSign(staticRoot, "SMART DN JOB", C.blue, -1.0, 2.65, 2.0, 2.4);
+    addBox(root, 5.2, 1.0, 1.2, 2.7, 0.18, 1.8, 0x6e7b89);
+    [[-1.0,-0.65],[1.0,-0.65],[-1.0,0.65],[1.0,0.65]].forEach(([dx,dz]) => addBox(root, 5.2+dx, 0.5, 1.2+dz, 0.1, 1.0, 0.1, 0x485361));
+    addSmallSign(root, "PACKING", C.green, 5.2, 3.0, 1.2, 1.9);
 
-    // Packing table, packer, outbound conveyor.
-    addBox(staticRoot, 6.3, 1.02, 1.5, 3.0, 0.18, 1.8, 0x6b7887, 0.5, 0.22);
-    [[-1.15,-0.65],[1.15,-0.65],[-1.15,0.65],[1.15,0.65]].forEach(([dx,dz]) => addBox(staticRoot, 6.3+dx, 0.52, 1.5+dz, 0.12, 1.0, 0.12, 0x4c5967));
-    const packer = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.34, 1.05, 16), mat3(0x47627d)); body.position.y = 0.53; packer.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), mat3(0xd5a078, 0.85)); head.position.y = 1.28; packer.add(head);
-    packer.position.set(4.5, 0, 3.0); staticRoot.add(packer);
-    addBox(staticRoot, 10.8, 0.62, 1.5, 6.5, 0.32, 1.2, 0x465667, 0.52, 0.2);
-    for (let x = 8.0; x <= 13.5; x += 0.75) {
-      const roller = new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.13,1.0,12), mat3(0x8b98a8,0.42,0.4));
-      roller.rotation.x = Math.PI/2; roller.position.set(x,0.82,1.5); staticRoot.add(roller);
-    }
-    addBox(staticRoot, 17.2, 0.95, 1.5, 3.4, 1.9, 2.8, 0xa66a2f, 0.55, 0.08);
-    addSign(staticRoot, "OUTBOUND GATE", C.orange, 17.2, 2.6, 1.5, 2.5);
+    addBox(root, 10.0, 0.58, 1.2, 7.0, 0.28, 1.0, 0x3c4956);
+    addBox(root, 15.8, 0.75, 1.2, 2.8, 1.5, 2.4, 0xc77a31);
+    addSmallSign(root, "SHIPPING", C.orange, 15.8, 2.9, 1.2, 2.0);
 
-    // Customer order board.
-    addBox(staticRoot, -20.0, 1.25, -4.2, 5.7, 2.5, 0.35, 0x1a2634, 0.5, 0.12);
-    addSign(staticRoot, "CUSTOMER ORDER · 10:00", C.blue, -20.0, 2.25, -4.0, 3.5);
-    addSign(staticRoot, "POS 10 · ITEM A · STOCK", C.green, -20.0, 1.45, -4.0, 3.1);
-    addSign(staticRoot, "POS 20 · ITEM B · INBOUND", C.orange, -20.0, 0.72, -4.0, 3.25);
+    // Static worker at packing table.
+    const workerBody = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.9, 14), mat3(0x4d6278, 0.8, 0.02));
+    workerBody.position.set(4.0, 1.25, 2.65); workerBody.castShadow = true; root.add(workerBody);
+    const workerHead = new THREE.Mesh(new THREE.SphereGeometry(0.21, 18, 12), mat3(0xd2a077, 0.9, 0));
+    workerHead.position.set(4.0, 1.9, 2.65); root.add(workerHead);
 
-    const actors = [];
-    const makeItem = (color, label) => {
-      const g = new THREE.Group();
-      addBox(g, 0, 0.24, 0, 0.65, 0.48, 0.5, color, 0.7, 0.04);
-      addSign(g, label, color, 0, 1.0, 0, 1.7); return g;
+    // Clean orthogonal route lines on the floor.
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0x53677c, transparent: true, opacity: 0.55 });
+    const addRoute = (x, z, sx, sz) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(sx, sz), lineMat.clone());
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(x, 0.055, z);
+      root.add(m);
     };
-    const makeParcel = (label, accent) => {
+    addRoute(-10.5, 5.0, 4.0, 0.16);
+    addRoute(-1.5, 5.0, 6.0, 0.16);
+    addRoute(1.5, 3.1, 0.16, 3.8);
+    addRoute(3.0, 1.2, 3.0, 0.16);
+
+    const actorsRoot = new THREE.Group();
+    scene.add(actorsRoot);
+    let actors = [];
+
+    const makeItem = (color) => {
       const g = new THREE.Group();
-      addBox(g, 0, 0.35, 0, 1.15, 0.7, 0.82, C.cardboard, 0.86, 0.02);
-      addBox(g, 0, 0.35, 0, 1.17, 0.15, 0.84, 0xa8753f, 0.8, 0.02);
-      addSign(g, label, accent, 0, 1.25, 0, 2.1); return g;
+      const item = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.38, 0.46), mat3(color, 0.7, 0.04));
+      item.position.y = 0.19; item.castShadow = true; g.add(item);
+      return g;
     };
-    const makeDN = (label, accent) => {
+    const makeParcel = (color) => {
       const g = new THREE.Group();
-      const p = new THREE.Mesh(new THREE.PlaneGeometry(0.85,1.05), new THREE.MeshBasicMaterial({ color:0xffffff, side:THREE.DoubleSide })); p.rotation.x=-Math.PI/2; g.add(p);
-      addSign(g,label,accent,0,0.45,0,1.7); return g;
+      const p = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.72, 0.76), mat3(0xc9975b, 0.88, 0.02));
+      p.position.y = 0.36; p.castShadow = true; g.add(p);
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.74, 0.78), mat3(color, 0.74, 0.02));
+      stripe.position.y = 0.36; g.add(stripe);
+      return g;
     };
-    const pathPos = (path,t) => {
+    const makeDN = (color) => {
+      const g = new THREE.Group();
+      const paper = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.06, 0.76), mat3(0xffffff, 0.9, 0));
+      paper.position.y = 0.05; g.add(paper);
+      const mark = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.07, 0.10), mat3(color, 0.65, 0));
+      mark.position.set(0, 0.09, 0.17); g.add(mark);
+      return g;
+    };
+
+    const pathPos = (path, t) => {
       if (t <= path[0][0]) return path[0];
-      for(let i=1;i<path.length;i++) { const a=path[i-1],b=path[i]; if(t<=b[0]) { const f=(t-a[0])/Math.max(.001,b[0]-a[0]); return [t,a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f,a[3]+(b[3]-a[3])*f]; } }
+      for (let i=1;i<path.length;i+=1) {
+        const a=path[i-1], b=path[i];
+        if (t <= b[0]) {
+          const f=(t-a[0])/Math.max(0.0001,b[0]-a[0]);
+          return [t,a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f,a[3]+(b[3]-a[3])*f];
+        }
+      }
       return path[path.length-1];
     };
+
+    const addActor = (obj, start, end, path) => {
+      obj.visible = false;
+      actorsRoot.add(obj);
+      actors.push({ obj, start, end, path });
+    };
+
     const rebuildActors = () => {
-      actors.forEach(a => { scene.remove(a.obj); a.obj.traverse(o=>{o.geometry?.dispose?.(); if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{m.map?.dispose?.();m.dispose?.();});}}); });
-      actors.length=0;
-      const add = (obj,start,end,path) => { obj.visible=false; scene.add(obj); actors.push({obj,start,end,path}); };
-      // Item A visible in storage from the beginning.
-      add(makeItem(C.green,"ITEM A"),0,runtime.current.mode==="old"?2.7:8.35,[[0,-12.5,0.75,6.4]]);
-      // Item B passes inbound and is put away two hours later.
-      add(makeItem(C.orange,"ITEM B"),0,8.4,[[0,-21.5,0.95,7.2],[6.0,-21.5,0.95,7.2],[7.0,-17.2,0.95,7.2],[8.0,-9.0,0.75,8.0]]);
-      if(runtime.current.mode==="old") {
-        add(makeDN("DELIVERY NOTE 1",C.red),0.75,2.2,[[.75,-1,1.8,2],[1.3,2.0,1.1,2],[2.2,5.2,1.2,1.5]]);
-        add(makeItem(C.green,"ITEM A"),1.5,3.2,[[1.5,-12.5,.75,6.4],[2.3,-3.5,.75,5.2],[3.2,6.0,1.45,1.5]]);
-        add(makeParcel("PARCEL 1",C.red),3.25,5.0,[[3.25,6.4,1.42,1.5],[4.0,10.5,1.08,1.5],[5.0,17.0,1.08,1.5]]);
-        add(makeDN("DELIVERY NOTE 2",C.red),8.15,9.15,[[8.15,-1,1.8,2],[8.65,2.0,1.1,2],[9.15,5.2,1.2,1.5]]);
-        add(makeItem(C.orange,"ITEM B"),8.25,9.75,[[8.25,-9.0,.75,8.0],[8.9,-3.5,.75,5.2],[9.75,6.5,1.45,1.5]]);
-        add(makeParcel("PARCEL 2",C.red),9.8,11.3,[[9.8,6.4,1.42,1.5],[10.45,10.5,1.08,1.5],[11.3,17.0,1.08,1.5]]);
+      actorsRoot.clear();
+      actors = [];
+      const old = runtime.current.mode === "old";
+
+      // Position 1 starts on stock; position 2 starts in inbound.
+      addActor(makeItem(0x3ddc84), 0, old ? 1.8 : 8.3, [[0, -6.8, 0.58, 4.95]]);
+      addActor(makeItem(0xff9f43), 0, 6.2, [[0, -15.8, 0.78, 5.05]]);
+      addActor(makeItem(0xff9f43), 6.2, 8.0, [
+        [6.2, -15.8, 0.78, 5.05],
+        [6.9, -12.0, 0.78, 5.05],
+        [7.6, -8.9, 0.78, 5.05],
+        [8.0, -5.1, 0.58, 4.95],
+      ]);
+
+      if (old) {
+        // First DN and first item are processed immediately.
+        addActor(makeDN(0xff6b6b), 0.55, 1.35, [[0.55, 0.8, 1.35, 1.2], [1.35, 3.3, 1.1, 1.2]]);
+        addActor(makeItem(0x3ddc84), 1.0, 2.3, [[1.0, -6.8, 0.58, 4.95], [1.55, -1.5, 0.58, 4.95], [1.95, 1.5, 0.58, 3.2], [2.3, 5.0, 1.35, 1.2]]);
+        addActor(makeParcel(0xff6b6b), 2.55, 4.3, [[2.55, 5.2, 1.35, 1.2], [3.25, 9.0, 0.78, 1.2], [4.3, 15.8, 0.78, 1.2]]);
+
+        // Second DN and second item follow after put-away.
+        addActor(makeDN(0xff6b6b), 8.15, 8.95, [[8.15, 0.8, 1.35, 1.2], [8.95, 3.3, 1.1, 1.2]]);
+        addActor(makeItem(0xff9f43), 8.35, 9.45, [[8.35, -5.1, 0.58, 4.95], [8.8, -1.5, 0.58, 4.95], [9.1, 1.5, 0.58, 3.2], [9.45, 5.3, 1.35, 1.2]]);
+        addActor(makeParcel(0xff6b6b), 9.7, 11.25, [[9.7, 5.2, 1.35, 1.2], [10.3, 9.0, 0.78, 1.2], [11.25, 15.8, 0.78, 1.2]]);
       } else {
-        add(makeItem(C.green,"ITEM A · RESERVED"),0.3,8.35,[[.3,-12.5,.75,6.4]]);
-        add(makeDN("1 COMBINED DELIVERY NOTE",C.green),8.15,9.25,[[8.15,-1,1.8,2],[8.7,2.0,1.1,2],[9.25,5.2,1.2,1.5]]);
-        add(makeItem(C.green,"ITEM A"),8.25,9.6,[[8.25,-12.5,.75,6.4],[8.8,-3.5,.75,5.2],[9.6,5.8,1.45,1.25]]);
-        add(makeItem(C.orange,"ITEM B"),8.35,9.7,[[8.35,-9.0,.75,8.0],[8.9,-3.5,.75,5.2],[9.7,6.9,1.45,1.75]]);
-        add(makeParcel("1 COMBINED PARCEL",C.green),9.85,11.25,[[9.85,6.4,1.42,1.5],[10.5,10.5,1.08,1.5],[11.25,17.0,1.08,1.5]]);
+        // Position 1 remains reserved until both positions are available.
+        addActor(makeDN(0x3ddc84), 8.15, 8.95, [[8.15, 0.8, 1.35, 1.2], [8.95, 3.3, 1.1, 1.2]]);
+        addActor(makeItem(0x3ddc84), 8.25, 9.35, [[8.25, -6.8, 0.58, 4.95], [8.65, -1.5, 0.58, 4.95], [9.0, 1.5, 0.58, 3.2], [9.35, 4.7, 1.35, 0.9]]);
+        addActor(makeItem(0xff9f43), 8.35, 9.45, [[8.35, -5.1, 0.58, 4.95], [8.75, -1.5, 0.58, 4.95], [9.1, 1.5, 0.58, 3.2], [9.45, 5.8, 1.35, 1.5]]);
+        addActor(makeParcel(0x3ddc84), 9.8, 11.15, [[9.8, 5.2, 1.35, 1.2], [10.35, 9.0, 0.78, 1.2], [11.15, 15.8, 0.78, 1.2]]);
       }
     };
     rebuildActors();
 
-    let dragging=false,lx=0,ly=0;
-    const down=e=>{dragging=true;lx=e.clientX;ly=e.clientY;};
-    const move=e=>{if(!dragging)return;const dx=e.clientX-lx,dy=e.clientY-ly;lx=e.clientX;ly=e.clientY;cam.theta-=dx*.005;cam.phi=Math.min(1.42,Math.max(.3,cam.phi-dy*.005));applyCam();};
-    const up=()=>dragging=false;
-    const wheel=e=>{e.preventDefault();cam.radius=Math.min(55,Math.max(15,cam.radius*(1+e.deltaY*.001)));applyCam();};
-    renderer.domElement.addEventListener("mousedown",down);window.addEventListener("mousemove",move);window.addEventListener("mouseup",up);renderer.domElement.addEventListener("wheel",wheel,{passive:false});
+    let dragging=false, lx=0, ly=0;
+    const down=(e)=>{dragging=true;lx=e.clientX;ly=e.clientY;};
+    const move=(e)=>{if(!dragging)return;const dx=e.clientX-lx,dy=e.clientY-ly;lx=e.clientX;ly=e.clientY;cam.theta-=dx*.005;cam.phi=Math.min(1.38,Math.max(.34,cam.phi-dy*.005));applyCam();};
+    const up=()=>{dragging=false;};
+    const wheel=(e)=>{e.preventDefault();cam.radius=Math.min(46,Math.max(17,cam.radius*(1+e.deltaY*.001)));applyCam();};
+    renderer.domElement.addEventListener("mousedown",down);
+    window.addEventListener("mousemove",move);
+    window.addEventListener("mouseup",up);
+    renderer.domElement.addEventListener("wheel",wheel,{passive:false});
 
-    const clock = new THREE.Clock(); let raf=0, lastMode=runtime.current.mode, hudAcc=0;
+    const clock = new THREE.Clock();
+    let raf=0, lastMode=runtime.current.mode, hudAcc=0;
     const tick=()=>{
       const dt=Math.min(.05,clock.getDelta());
       if(lastMode!==runtime.current.mode){lastMode=runtime.current.mode;rebuildActors();}
       if(runtime.current.playing) runtime.current.t=Math.min(11.5,runtime.current.t+dt*runtime.current.speed);
       const t=runtime.current.t;
-      actors.forEach(a=>{const vis=t>=a.start&&t<=a.end;a.obj.visible=vis;if(vis){const [,x,y,z]=pathPos(a.path,t);a.obj.position.set(x,y,z);}});
+      actors.forEach(a=>{
+        const visible=t>=a.start&&t<=a.end;
+        a.obj.visible=visible;
+        if(visible){const [,x,y,z]=pathPos(a.path,t);a.obj.position.set(x,y,z);}
+      });
+
       hudAcc+=dt;
-      if(hudAcc>.12){hudAcc=0;const mins=600+(t/11.5)*165;const h=Math.floor(mins/60),m=Math.floor(mins%60);let message="Customer order created with two positions";let parcels=0,dns=0,cost="—";
+      if(hudAcc>.10){
+        hudAcc=0;
+        const mins=600+(t/11.5)*165;
+        const h=Math.floor(mins/60),m=Math.floor(mins%60);
+        let message="Customer order created with two positions";
+        let itemA="Available in storage";
+        let itemB="Waiting in inbound";
+        let dn="Not created";
+        let parcels=0;
+        let cost="—";
+        let phase="Order created";
+
+        if(t>=6.2){itemB="Put-away in progress";phase="Inbound put-away";}
+        if(t>=8.0){itemB="Available in storage";}
+
         if(runtime.current.mode==="old"){
-          if(t>=.75){message="Delivery Note 1 created immediately for Item A";dns=1;} if(t>=5){message="Parcel 1 shipped while Item B is still in put-away";parcels=1;cost="1×";} if(t>=8.15){message="Item B available — Delivery Note 2 created";dns=2;} if(t>=11.3){message="Two parcels shipped · duplicate transport cost";parcels=2;cost="2×";}
+          if(t>=.55){dn="DN 1 created for Item A";message="Position 1 is released immediately";phase="First delivery created";}
+          if(t>=2.55){itemA="Packed in Parcel 1";}
+          if(t>=4.3){parcels=1;cost="1×";message="Parcel 1 has already left before Item B is available";phase="First shipment completed";}
+          if(t>=8.15){dn="DN 2 created for Item B";message="A second delivery is created after put-away";phase="Second delivery created";}
+          if(t>=9.7){itemB="Packed in Parcel 2";}
+          if(t>=11.25){parcels=2;cost="2×";message="Two parcels shipped although both items fit into one package";phase="Split shipment";}
         } else {
-          if(t>=.75) message="Smart job holds delivery-note creation"; if(t>=8.0) message="Both positions available at the same shipping point"; if(t>=8.15){message="One combined delivery note created";dns=1;} if(t>=11.25){message="Both items shipped in one parcel · one transport cost";parcels=1;cost="1×";}
+          if(t>=.55){dn="Creation intentionally held";message="Smart job waits for the missing position";phase="Consolidation hold";}
+          if(t>=8.0){message="Both positions are available at the same shipping point";phase="Order complete";}
+          if(t>=8.15){dn="1 combined DN created";message="One delivery note releases both positions together";phase="Combined delivery created";}
+          if(t>=9.8){itemA="Packed together";itemB="Packed together";}
+          if(t>=11.15){parcels=1;cost="1×";message="Both items shipped in one parcel";phase="Consolidated shipment";}
         }
-        setHud({clock:`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`,message,parcels,dns,cost});setPlaying(runtime.current.playing);
+
+        setHud({clock:`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`,message,itemA,itemB,dn,parcels,cost,phase});
+        setPlaying(runtime.current.playing);
       }
-      renderer.render(scene,camera);raf=requestAnimationFrame(tick);
-    };tick();
-    const resize=()=>{const w=mount.clientWidth,h=mount.clientHeight;camera.aspect=w/Math.max(1,h);camera.updateProjectionMatrix();renderer.setSize(w,h);};window.addEventListener("resize",resize);
-    return()=>{cancelAnimationFrame(raf);window.removeEventListener("resize",resize);window.removeEventListener("mousemove",move);window.removeEventListener("mouseup",up);renderer.domElement.removeEventListener("mousedown",down);renderer.domElement.removeEventListener("wheel",wheel);scene.traverse(o=>{o.geometry?.dispose?.();if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{m.map?.dispose?.();m.dispose?.();});}});renderer.dispose();renderer.domElement.remove();};
+      renderer.render(scene,camera);
+      raf=requestAnimationFrame(tick);
+    };
+    tick();
+
+    const resize=()=>{const w=mount.clientWidth,h=mount.clientHeight;camera.aspect=w/Math.max(1,h);camera.updateProjectionMatrix();renderer.setSize(w,h);};
+    window.addEventListener("resize",resize);
+
+    return()=>{
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize",resize);
+      window.removeEventListener("mousemove",move);
+      window.removeEventListener("mouseup",up);
+      renderer.domElement.removeEventListener("mousedown",down);
+      renderer.domElement.removeEventListener("wheel",wheel);
+      scene.traverse(o=>{o.geometry?.dispose?.();if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{m.map?.dispose?.();m.dispose?.();});}});
+      renderer.dispose();
+      renderer.domElement.remove();
+    };
   }, []);
 
   const pgBtn = (active) => ({
@@ -1355,42 +1477,91 @@ function ProcessGapSimulation({ onHome }) {
     whiteSpace: "nowrap",
   });
 
-  const reset=()=>{runtime.current.t=0;runtime.current.playing=false;setPlaying(false);setHud({clock:"10:00",message:mode==="old"?"Old world selected — immediate delivery-note creation":"Smart job selected — wait for both positions",parcels:0,dns:0,cost:"—"});};
+  const reset=()=>{
+    runtime.current.t=0;
+    runtime.current.playing=false;
+    setPlaying(false);
+    setHud({clock:"10:00",message:mode==="old"?"Immediate delivery-note creation is active":"Smart job waits for both positions",itemA:"Available in storage",itemB:"Waiting in inbound",dn:"Not created",parcels:0,cost:"—",phase:"Order created"});
+  };
   const choose=(next)=>{runtime.current.mode=next;setMode(next);};
+
+  const statusStyle=(status)=>({
+    color: status.includes("Available")||status.includes("together")||status.includes("combined") ? C.green : status.includes("Waiting")||status.includes("progress")||status.includes("held") ? C.orange : C.text,
+    fontWeight:700,
+  });
+
   return (
     <div style={{position:"absolute",inset:0,background:C.bg,color:C.text,fontFamily:"'Space Grotesk',system-ui,sans-serif",display:"flex",flexDirection:"column",overflow:"hidden"}}>
-      <div style={{minHeight:66,padding:"10px 14px",borderBottom:`1px solid ${C.line}`,display:"flex",alignItems:"center",gap:12,background:C.panel}}>
-        <div style={{marginRight:"auto"}}><div style={{fontSize:18,fontWeight:800}}>Process Gap Simulation · Same-Day & Same Shipping Point</div><div style={{fontSize:11,color:C.dim,fontFamily:"'IBM Plex Mono',monospace",marginTop:3}}>One customer order · two positions · one shipping point · 3D warehouse view</div></div>
-        <div style={{padding:"7px 11px",border:`1px solid ${C.orange}`,borderRadius:8,background:"rgba(255,140,66,.08)",textAlign:"center",minWidth:105}}><div style={{fontSize:8,color:C.dim,letterSpacing:1}}>SIMULATION TIME</div><div style={{fontSize:18,fontWeight:900}}>{hud.clock}</div></div>
+      <div style={{minHeight:64,padding:"9px 14px",borderBottom:`1px solid ${C.line}`,display:"flex",alignItems:"center",gap:12,background:C.panel}}>
+        <div style={{marginRight:"auto"}}>
+          <div style={{fontSize:18,fontWeight:800}}>Process Gap Simulation · Same-Day & Same Shipping Point</div>
+          <div style={{fontSize:11,color:C.dim,fontFamily:"'IBM Plex Mono',monospace",marginTop:3}}>One order · two positions · compare split shipment versus consolidation</div>
+        </div>
+        <div style={{padding:"7px 11px",border:`1px solid ${C.orange}`,borderRadius:8,background:"rgba(255,140,66,.08)",textAlign:"center",minWidth:102}}>
+          <div style={{fontSize:8,color:C.dim,letterSpacing:1}}>TIME</div>
+          <div style={{fontSize:18,fontWeight:900}}>{hud.clock}</div>
+        </div>
         <button style={pgBtn(false)} onClick={onHome}>⌂ Home</button>
       </div>
+
       <div style={{flex:1,position:"relative",minHeight:0}}>
         <div ref={mountRef} style={{position:"absolute",inset:0}} />
-        <div style={{position:"absolute",top:12,left:12,width:350,maxWidth:"calc(100% - 300px)",background:"rgba(13,18,25,.94)",border:`1px solid ${mode==="old"?C.red:C.green}`,borderRadius:11,padding:"12px 14px"}}>
-          <div style={{color:mode==="old"?C.red:C.green,fontFamily:"'IBM Plex Mono',monospace",fontSize:10,fontWeight:800,letterSpacing:1}}>{mode==="old"?"OLD WORLD":"SMART DELIVERY NOTE CREATION JOB"}</div>
-          <div style={{fontSize:16,fontWeight:800,margin:"6px 0"}}>{mode==="old"?"Immediate creation causes a split shipment":"Wait for both positions and consolidate"}</div>
-          <div style={{fontSize:12,color:C.dim,lineHeight:1.5}}>{hud.message}</div>
+
+        <div style={{position:"absolute",top:12,left:12,right:292,display:"grid",gridTemplateColumns:"minmax(360px,620px) minmax(230px,1fr)",gap:10,alignItems:"start",pointerEvents:"none"}}>
+          <div style={{background:"rgba(13,18,25,.94)",border:`1px solid ${C.line}`,borderRadius:11,overflow:"hidden",pointerEvents:"auto"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 12px",borderBottom:`1px solid ${C.line}`}}>
+              <div>
+                <div style={{fontSize:10,color:C.dim,letterSpacing:1,fontFamily:"'IBM Plex Mono',monospace"}}>CUSTOMER ORDER 4711 · CREATED 10:00</div>
+                <div style={{fontSize:15,fontWeight:800,marginTop:3}}>2 positions · same day · same shipping point</div>
+              </div>
+              <div style={{fontSize:10,color:mode==="old"?C.red:C.green,fontWeight:800}}>{mode==="old"?"OLD WORLD":"SMART DN JOB"}</div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"74px 1fr 150px",fontSize:11}}>
+              <div style={tableHead}>Position</div><div style={tableHead}>Item</div><div style={tableHead}>Current status</div>
+              <div style={tableCell}>10</div><div style={tableCell}>Item A · warehouse stock</div><div style={{...tableCell,...statusStyle(hud.itemA)}}>{hud.itemA}</div>
+              <div style={tableCell}>20</div><div style={tableCell}>Item B · inbound receipt</div><div style={{...tableCell,...statusStyle(hud.itemB)}}>{hud.itemB}</div>
+            </div>
+          </div>
+
+          <div style={{background:"rgba(13,18,25,.92)",border:`1px solid ${mode==="old"?C.red:C.green}`,borderRadius:11,padding:"11px 13px",pointerEvents:"auto"}}>
+            <div style={{fontSize:9,color:C.dim,letterSpacing:1,marginBottom:5}}>CURRENT PROCESS STEP</div>
+            <div style={{fontSize:15,fontWeight:800,marginBottom:5}}>{hud.phase}</div>
+            <div style={{fontSize:12,color:C.dim,lineHeight:1.45}}>{hud.message}</div>
+            <div style={{fontSize:11,marginTop:8,color:C.text}}>Delivery note: <span style={{fontWeight:800}}>{hud.dn}</span></div>
+          </div>
         </div>
-        <div style={{position:"absolute",top:12,right:12,width:260,display:"grid",gap:9}}>
+
+        <div style={{position:"absolute",top:12,right:12,width:268,display:"grid",gap:9}}>
           <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
             <div style={{fontSize:9,color:C.dim,letterSpacing:1,marginBottom:8}}>SCENARIO</div>
-            <button onClick={()=>choose("old")} style={{...pgBtn(mode==="old"),width:"100%",marginBottom:7,borderColor:C.red,color:mode==="old"?C.bg:C.red,background:mode==="old"?C.red:"transparent"}}>Old world</button>
-            <button onClick={()=>choose("smart")} style={{...pgBtn(mode==="smart"),width:"100%",borderColor:C.green,color:mode==="smart"?C.bg:C.green,background:mode==="smart"?C.green:"transparent"}}>Smart DN Job</button>
+            <button onClick={()=>choose("old")} style={{...pgBtn(mode==="old"),width:"100%",marginBottom:7,borderColor:C.red,color:mode==="old"?C.bg:C.red,background:mode==="old"?C.red:"transparent"}}>Old world · 2 parcels</button>
+            <button onClick={()=>choose("smart")} style={{...pgBtn(mode==="smart"),width:"100%",borderColor:C.green,color:mode==="smart"?C.bg:C.green,background:mode==="smart"?C.green:"transparent"}}>Smart DN · 1 parcel</button>
           </div>
+
           <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
-            <div style={{display:"flex",gap:7}}><button onClick={()=>{runtime.current.playing=!runtime.current.playing;setPlaying(runtime.current.playing);}} style={{...pgBtn(true),flex:1,background:playing?C.orange:C.green,borderColor:playing?C.orange:C.green,color:C.bg}}>{playing?"Pause":"Start"}</button><button onClick={reset} style={pgBtn(false)}>Reset</button></div>
+            <div style={{display:"flex",gap:7}}>
+              <button onClick={()=>{runtime.current.playing=!runtime.current.playing;setPlaying(runtime.current.playing);}} style={{...pgBtn(true),flex:1,background:playing?C.orange:C.green,borderColor:playing?C.orange:C.green,color:C.bg}}>{playing?"Pause":"Start"}</button>
+              <button onClick={reset} style={pgBtn(false)}>Reset</button>
+            </div>
             <label style={{display:"flex",alignItems:"center",gap:7,marginTop:9,fontSize:11,color:C.dim}}>Speed<input type="range" min="0.6" max="2" step="0.1" value={speed} onChange={e=>{const v=Number(e.target.value);runtime.current.speed=v;setSpeed(v);}}/><span>{speed.toFixed(1)}×</span></label>
           </div>
+
           <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
             <div style={{fontSize:9,color:C.dim,letterSpacing:1,marginBottom:8}}>BUSINESS IMPACT</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>{[["Delivery notes",hud.dns],["Parcels",hud.parcels],["Transport cost",hud.cost],["Result",mode==="old"?"Split":"Combined"]].map(([l,v])=><div key={l} style={{background:C.panel2,border:`1px solid ${C.line}`,borderRadius:8,padding:8}}><div style={{fontSize:9,color:C.dim}}>{l}</div><div style={{fontSize:18,fontWeight:900,marginTop:3}}>{v}</div></div>)}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
+              {[['Parcels',hud.parcels],['Transport cost',hud.cost],['Delivery note',mode==='old'?(hud.dn.includes('2')?'2':'1'):(hud.dn.includes('combined')?'1':'0')],['Outcome',mode==='old'?'Split':'Combined']].map(([l,v])=><div key={l} style={{background:C.panel2,border:`1px solid ${C.line}`,borderRadius:8,padding:8}}><div style={{fontSize:9,color:C.dim}}>{l}</div><div style={{fontSize:17,fontWeight:900,marginTop:3}}>{v}</div></div>)}
+            </div>
           </div>
         </div>
+
         <div style={{position:"absolute",left:12,bottom:12,padding:"7px 10px",background:"rgba(13,18,25,.88)",border:`1px solid ${C.line}`,borderRadius:8,color:C.dim,fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>Drag to rotate · Scroll to zoom</div>
       </div>
     </div>
   );
 }
+
+const tableHead = {padding:"7px 9px",background:"rgba(255,255,255,.035)",borderBottom:`1px solid ${C.line}`,color:C.dim,fontWeight:700};
+const tableCell = {padding:"8px 9px",borderBottom:`1px solid ${C.line}`,color:C.text};
 
 
 export default function SupplyChainSim() {
