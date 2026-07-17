@@ -1155,469 +1155,231 @@ function pgBuildScenarioData(mode) {
 }
 
 function ProcessGapSimulation({ onHome }) {
-  const [screen, setScreen] = useState("process-gap");
   const [scenario, setScenario] = useState("old");
   const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [speed, setSpeed] = useState(1);
-  const [simTime, setSimTime] = useState(0);
-  const [activeEvent, setActiveEvent] = useState("");
-  const mountRef = useRef(null);
-  const simRef = useRef({ playing: false, speed: 1, t: 0, duration: 11.5 });
-  const sceneCtx = useRef(null);
-
-  const scenarioData = useMemo(() => pgBuildScenarioData(scenario), [scenario]);
 
   useEffect(() => {
-    simRef.current.playing = playing;
-  }, [playing]);
-  useEffect(() => {
-    simRef.current.speed = speed;
-  }, [speed]);
-
-  useEffect(() => {
-    if (screen !== "process-gap") return undefined;
-    const mount = mountRef.current;
-    if (!mount) return undefined;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(PGC.bg);
-    scene.fog = new THREE.Fog(0x0b1118, 24, 54);
-    const camera = new THREE.PerspectiveCamera(50, mount.clientWidth / mount.clientHeight, 0.1, 100);
-    camera.position.set(18, 15, 21);
-    camera.lookAt(0, 0.9, 0.8);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(mount.clientWidth, mount.clientHeight);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    mount.appendChild(renderer.domElement);
-
-    const hemi = new THREE.HemisphereLight(0xdce8ff, 0x1a2330, 1.85);
-    scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xffffff, 2.0);
-    sun.position.set(10, 20, 8);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -28;
-    sun.shadow.camera.right = 28;
-    sun.shadow.camera.top = 28;
-    sun.shadow.camera.bottom = -28;
-    scene.add(sun);
-
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(48, 28),
-      new THREE.MeshStandardMaterial({ color: 0x0f1620, roughness: 0.95, metalness: 0.02 })
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-    scene.add(floor);
-
-    const grid = new THREE.GridHelper(48, 24, 0x293547, 0x182230);
-    grid.position.y = 0.01;
-    scene.add(grid);
-
-    // colored areas
-    pgBox(scene, -11.6, 0.02, -4.5, 5.4, 0.04, 4.0, 0x1a2230);
-    pgBox(scene, -11.0, 0.02, 4.8, 6.2, 0.04, 5.2, 0x15253a);
-    pgBox(scene, -4.2, 0.02, 4.8, 7.2, 0.04, 5.8, 0x332a14);
-    pgBox(scene, 0.0, 0.02, 0.2, 4.4, 0.04, 3.8, 0x20273a);
-    pgBox(scene, 6.4, 0.02, -0.2, 6.8, 0.04, 4.8, 0x16311f);
-    pgBox(scene, 12.1, 0.02, -0.2, 5.0, 0.04, 4.8, 0x2a2216);
-
-    // order desk
-    pgBox(scene, -12.5, 0.45, -4.5, 2.0, 0.9, 1.2, 0x52606f);
-    const orderSign = pgMakeTextSprite("CUSTOMER ORDER", PGC.blue);
-    orderSign.position.set(-12.5, 2.35, -4.5); scene.add(orderSign);
-    const topicSign = pgMakeTextSprite("SAME-DAY & SAME SHIPPING POINT", PGC.yellow, "rgba(16,22,31,0.95)", 34, 0.0084);
-    topicSign.position.set(-7.2, 3.35, -4.55); scene.add(topicSign);
-
-    // inbound
-    pgBox(scene, -12.2, 0.55, 4.8, 2.8, 1.1, 2.2, 0x59677a);
-    const inboundSign = pgMakeTextSprite("INBOUND / PUT-AWAY", PGC.blue, "rgba(12,18,28,0.92)", 38, 0.0082);
-    inboundSign.position.set(-11.2, 2.95, 4.8); scene.add(inboundSign);
-
-    // storage racks
-    for (let i = 0; i < 3; i += 1) {
-      const x = -5.8 + i * 1.8;
-      pgBox(scene, x, 1.45, 4.4, 1.0, 2.9, 0.6, 0x667488);
-      pgBox(scene, x, 0.55, 4.4, 1.1, 0.08, 0.7, 0x7f8b9a);
-      pgBox(scene, x, 1.45, 4.4, 1.1, 0.08, 0.7, 0x7f8b9a);
-      pgBox(scene, x, 2.35, 4.4, 1.1, 0.08, 0.7, 0x7f8b9a);
-    }
-    const storageSign = pgMakeTextSprite("STORAGE", PGC.yellow, "rgba(12,18,28,0.92)", 42, 0.0084);
-    storageSign.position.set(-4.2, 3.2, 4.85); scene.add(storageSign);
-
-    // DN printer
-    pgBox(scene, 0.0, 0.62, 0.2, 1.1, 1.24, 0.9, 0x2e3b4b);
-    const dnSign = pgMakeTextSprite("DELIVERY NOTE PRINTER", PGC.dim, "rgba(12,18,28,0.9)", 28, 0.0069);
-    dnSign.position.set(0.0, 2.55, 0.2); scene.add(dnSign);
-
-    // packing table and packer
-    pgBox(scene, 6.4, 1.0, -0.2, 2.4, 0.16, 1.6, 0x6d7a88);
-    [[-0.85,-0.55], [0.85,-0.55], [-0.85,0.55], [0.85,0.55]].forEach(([dx,dz]) => pgBox(scene, 6.4 + dx, 0.5, -0.2 + dz, 0.1, 1.0, 0.1, 0x465160));
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.92, 14), new THREE.MeshStandardMaterial({ color: 0x4d6278, roughness: 0.8 }));
-    body.position.set(5.2, 1.16, 1.1); body.castShadow = true; scene.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 12), new THREE.MeshStandardMaterial({ color: 0xd9a67b, roughness: 0.9 }));
-    head.position.set(5.2, 1.84, 1.1); scene.add(head);
-    const packSign = pgMakeTextSprite("PACKING", PGC.green, "rgba(12,18,28,0.92)", 42, 0.0082);
-    packSign.position.set(6.5, 3.0, -0.2); scene.add(packSign);
-
-    // shipping gate + truck trailer
-    pgBox(scene, 12.6, 0.55, -0.2, 2.8, 1.1, 2.4, 0xcc7a2f);
-    const shipSign = pgMakeTextSprite("SHIPPING", PGC.orange, "rgba(12,18,28,0.92)", 42, 0.0083);
-    shipSign.position.set(12.5, 2.95, -0.2); scene.add(shipSign);
-
-    // arrows
-    const arrows = [];
-    const addArrow = (a, b, color) => {
-      const dir = new THREE.Vector3().subVectors(b, a);
-      const len = dir.length(); dir.normalize();
-      const arrow = new THREE.ArrowHelper(dir, a, len, new THREE.Color(color), 0.7, 0.34);
-      scene.add(arrow); arrows.push(arrow);
-    };
-    addArrow(new THREE.Vector3(-10.0, 0.8, -3.6), new THREE.Vector3(-1.1, 0.8, 0.2), PGC.blue);
-    addArrow(new THREE.Vector3(-10.2, 0.8, 4.8), new THREE.Vector3(-4.7, 0.8, 4.8), PGC.orange);
-    addArrow(new THREE.Vector3(-2.1, 0.8, 4.0), new THREE.Vector3(4.6, 0.8, -0.2), PGC.yellow);
-    addArrow(new THREE.Vector3(7.8, 0.8, -0.2), new THREE.Vector3(12.0, 0.8, -0.2), PGC.green);
-
-    // order board dynamic lines
-    const orderInfo = new THREE.Group();
-    const o1 = pgMakeTextSprite("Order 4711", PGC.text, "rgba(12,18,28,0.94)", 32, 0.0068);
-    o1.position.set(-12.5, 1.95, -4.5); orderInfo.add(o1);
-    const o2 = pgMakeTextSprite("Pos. 10 · Item A · stock", PGC.green, "rgba(12,18,28,0.94)", 24, 0.0056);
-    o2.position.set(-12.5, 1.35, -4.5); orderInfo.add(o2);
-    const o3 = pgMakeTextSprite("Pos. 20 · Item B · inbound", PGC.orange, "rgba(12,18,28,0.94)", 24, 0.0056);
-    o3.position.set(-12.5, 0.76, -4.5); orderInfo.add(o3);
-    scene.add(orderInfo);
-
-    // animated objects
-    const objects = [];
-    scenarioData.entities.forEach((e) => {
-      let obj;
-      if (e.kind === "item") obj = pgCreateItem(e.color, e.label);
-      else if (e.kind === "doc") obj = pgCreateDocument(e.label);
-      else obj = pgCreateParcel(e.color, e.label);
-      obj.visible = false;
-      scene.add(obj);
-      objects.push({ ...e, obj });
-    });
-
-    // camera drag
-    let dragging = false;
-    let last = { x: 0, y: 0 };
-    let yaw = -0.65;
-    let pitch = 0.72;
-    let radius = 28;
-    const target = new THREE.Vector3(0, 0.8, 0.8);
-    const updateCamera = () => {
-      const hr = radius * Math.cos(pitch);
-      camera.position.set(target.x + hr * Math.sin(yaw), target.y + radius * Math.sin(pitch), target.z + hr * Math.cos(yaw));
-      camera.lookAt(target);
-    };
-    updateCamera();
-    const down = (ev) => { dragging = true; last = { x: ev.clientX, y: ev.clientY }; renderer.domElement.setPointerCapture?.(ev.pointerId); };
-    const move = (ev) => {
-      if (!dragging) return;
-      const dx = ev.clientX - last.x; const dy = ev.clientY - last.y;
-      yaw -= dx * 0.0055; pitch = THREE.MathUtils.clamp(pitch + dy * 0.0035, 0.28, 1.08);
-      last = { x: ev.clientX, y: ev.clientY }; updateCamera();
-    };
-    const up = (ev) => { dragging = false; renderer.domElement.releasePointerCapture?.(ev.pointerId); };
-    const wheel = (ev) => { radius = THREE.MathUtils.clamp(radius + ev.deltaY * 0.018, 16, 38); updateCamera(); };
-    renderer.domElement.addEventListener("pointerdown", down);
-    renderer.domElement.addEventListener("pointermove", move);
-    renderer.domElement.addEventListener("pointerup", up);
-    renderer.domElement.addEventListener("pointercancel", up);
-    renderer.domElement.addEventListener("wheel", wheel, { passive: true });
-
-    const clock = new THREE.Clock();
-    simRef.current.t = 0;
-    simRef.current.duration = scenarioData.duration;
-    setSimTime(0);
-    setActiveEvent(scenarioData.events[0]?.label || "");
-
-    let raf = 0;
-    const animate = () => {
-      const dt = Math.min(0.05, clock.getDelta());
-      if (simRef.current.playing) simRef.current.t = Math.min(simRef.current.duration, simRef.current.t + dt * simRef.current.speed);
-      const t = simRef.current.t;
-      setSimTime(t);
-
-      let latest = scenarioData.events[0]?.label || "";
-      for (const ev of scenarioData.events) {
-        if (t >= ev.t) latest = ev.label;
-      }
-      setActiveEvent(latest);
-
-      objects.forEach((e) => {
-        const visible = t >= e.start && t <= (e.end ?? 999);
-        e.obj.visible = visible;
-        if (!visible) return;
-        const [, x, y, z] = pgLerpPath(e.path, t);
-        e.obj.position.set(x, y, z);
+    if (!playing) return undefined;
+    const timer = window.setInterval(() => {
+      setProgress((p) => {
+        const next = Math.min(100, p + 0.45 * speed);
+        if (next >= 100) setPlaying(false);
+        return next;
       });
+    }, 45);
+    return () => window.clearInterval(timer);
+  }, [playing, speed]);
 
-      // subtle pulse on order desk after creation
-      orderInfo.children[0].material.opacity = 0.9 + Math.sin(t * 3.0) * 0.05;
-
-      renderer.render(scene, camera);
-      raf = requestAnimationFrame(animate);
-    };
-    animate();
-
-    const onResize = () => {
-      camera.aspect = mount.clientWidth / mount.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(mount.clientWidth, mount.clientHeight);
-    };
-    window.addEventListener("resize", onResize);
-
-    sceneCtx.current = { renderer };
-
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", onResize);
-      renderer.domElement.removeEventListener("pointerdown", down);
-      renderer.domElement.removeEventListener("pointermove", move);
-      renderer.domElement.removeEventListener("pointerup", up);
-      renderer.domElement.removeEventListener("pointercancel", up);
-      renderer.domElement.removeEventListener("wheel", wheel);
-      scene.traverse((o) => {
-        if (o.geometry) o.geometry.dispose?.();
-        if (o.material) {
-          const mats = Array.isArray(o.material) ? o.material : [o.material];
-          mats.forEach((m) => { if (m.map) m.map.dispose?.(); m.dispose?.(); });
-        }
-      });
-      renderer.dispose();
-      renderer.domElement.remove();
-      sceneCtx.current = null;
-    };
-  }, [screen, scenario, scenarioData]);
-
-  const resetSim = () => {
-    simRef.current.t = 0;
-    setSimTime(0);
+  const reset = () => {
     setPlaying(false);
-    setActiveEvent(scenarioData.events[0]?.label || "");
+    setProgress(0);
   };
 
-  const startScenario = (type) => {
-    setScenario(type);
-    setScreen("process-gap");
+  const switchScenario = (next) => {
+    setScenario(next);
     setPlaying(false);
-    setTimeout(() => {
-      simRef.current.t = 0;
-      setSimTime(0);
-      setPlaying(true);
-    }, 50);
+    setProgress(0);
   };
 
-  const simClock = pgHhmm(scenarioData.minuteAt(simTime));
-  const visibleEvents = scenarioData.events.filter((e) => simTime >= e.t).slice(-6).reverse();
+  const phase = progress < 18 ? 0 : progress < 48 ? 1 : progress < 72 ? 2 : progress < 90 ? 3 : 4;
+  const minutes = Math.round(600 + (progress / 100) * 165);
+  const clock = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  const old = scenario === "old";
+
+  const stages = old
+    ? [
+        { title: "10:00 · Order created", text: "One customer order with two positions.", tone: C.blue },
+        { title: "10:05 · DN 1 created", text: "Position 1 is already on stock, so the first delivery note is created immediately.", tone: C.red },
+        { title: "10:45 · Parcel 1 shipped", text: "Item A leaves in its own parcel.", tone: C.red },
+        { title: "12:00 · Position 2 available", text: "Item B completes inbound put-away and triggers DN 2.", tone: C.orange },
+        { title: "12:40 · Parcel 2 shipped", text: "A second parcel leaves separately. Result: two transport charges.", tone: C.red },
+      ]
+    : [
+        { title: "10:00 · Order created", text: "One customer order with two positions.", tone: C.blue },
+        { title: "10:05 · Creation job waits", text: "No delivery note is created while position 2 is still in inbound.", tone: C.yellow },
+        { title: "10:05–12:00 · Position 1 reserved", text: "Item A remains available for consolidation at the same shipping point.", tone: C.green },
+        { title: "12:00 · Both positions available", text: "The job creates one combined delivery note.", tone: C.green },
+        { title: "12:40 · One parcel shipped", text: "Both items fit into one parcel. Result: one transport charge.", tone: C.green },
+      ];
+
+  const itemAStage = old ? (progress < 20 ? "storage" : progress < 38 ? "packing" : "shipping") : progress < 72 ? "storage" : progress < 88 ? "packing" : "shipping";
+  const itemBStage = progress < 48 ? "inbound" : progress < 72 ? "storage" : progress < 88 ? "packing" : "shipping";
+  const parcelCount = old ? (progress < 38 ? 0 : progress < 82 ? 1 : 2) : progress < 88 ? 0 : 1;
+  const dnCount = old ? (progress < 18 ? 0 : progress < 72 ? 1 : 2) : progress < 72 ? 0 : 1;
+
+  const card = (accent, active = false) => ({
+    border: `1px solid ${active ? accent : C.line}`,
+    background: active ? `${accent}12` : C.panel2,
+    borderRadius: 12,
+    padding: 12,
+  });
+
+  const areaStyle = (accent) => ({
+    border: `1px solid ${accent}88`,
+    background: `${accent}0d`,
+    borderRadius: 14,
+    minHeight: 122,
+    padding: 12,
+    position: "relative",
+    overflow: "hidden",
+  });
+
+  const flowItem = (label, accent, visible = true) => ({
+    opacity: visible ? 1 : 0.16,
+    border: `1px solid ${accent}`,
+    background: `${accent}20`,
+    color: accent,
+    borderRadius: 8,
+    padding: "7px 9px",
+    fontSize: 12,
+    fontWeight: 800,
+    transition: "all .35s ease",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+  });
 
   return (
-    <div style={{ minHeight: "100vh", background: PGC.bg, color: PGC.text, fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-      {screen === "landing" ? (
-        <div style={{ padding: 28, maxWidth: 1280, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 26, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ color: PGC.yellow, textTransform: "uppercase", letterSpacing: "0.14em", fontSize: 12, fontWeight: 800, marginBottom: 8 }}>Supply Chain 3D Simulation</div>
-              <h1 style={{ margin: 0, fontSize: "clamp(28px,4vw,42px)" }}>Landing Page</h1>
-              <p style={{ margin: "8px 0 0", color: PGC.dim, maxWidth: 860, lineHeight: 1.55 }}>
-                This standalone file focuses on a new process-gap simulation for the Same-Day & Same Shipping Point topic. It visualizes how Smart Delivery Note Creation can avoid split shipments and double transport cost.
-              </p>
-            </div>
-          </div>
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'Space Grotesk', system-ui, sans-serif", padding: 16, overflowY: "auto" }}>
+      <style>{`
+        * { box-sizing: border-box; }
+        .pg-grid { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:14px; }
+        .pg-flow { display:grid; grid-template-columns:repeat(5,minmax(130px,1fr)); gap:10px; align-items:stretch; }
+        .pg-arrow { display:flex; align-items:center; justify-content:center; color:${C.dim}; font-size:22px; }
+        @media(max-width:1050px){ .pg-grid{grid-template-columns:1fr;} }
+        @media(max-width:820px){ .pg-flow{grid-template-columns:1fr;} .pg-arrow{transform:rotate(90deg); min-height:22px;} }
+      `}</style>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 18 }}>
-            <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 18, padding: 20, opacity: 0.72 }}>
-              <div style={{ color: PGC.blue, fontSize: 12, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 10 }}>Existing Entry</div>
-              <h3 style={{ margin: "0 0 10px" }}>View Current Label Process</h3>
-              <p style={{ margin: 0, color: PGC.dim, lineHeight: 1.5 }}>Placeholder in this standalone file. The focus of this version is the process-gap simulation.</p>
-            </div>
-            <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 18, padding: 20, opacity: 0.72 }}>
-              <div style={{ color: PGC.green, fontSize: 12, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 10 }}>Existing Entry</div>
-              <h3 style={{ margin: "0 0 10px" }}>Compare Future Label Concepts</h3>
-              <p style={{ margin: 0, color: PGC.dim, lineHeight: 1.5 }}>Placeholder in this standalone file. The focus of this version is the process-gap simulation.</p>
-            </div>
-            <div style={{ border: `1px solid ${PGC.yellow}`, background: PGC.panel2, borderRadius: 18, padding: 20, boxShadow: "0 0 0 1px rgba(255,209,102,0.12) inset" }}>
-              <div style={{ color: PGC.yellow, fontSize: 12, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 10 }}>New Entry</div>
-              <h3 style={{ margin: "0 0 10px" }}>Process Gap Simulation</h3>
-              <p style={{ margin: "0 0 14px", color: PGC.dim, lineHeight: 1.55 }}>
-                Visualize the Same-Day & Same Shipping Point issue: one order with two positions, one already on stock and one only available later through inbound put-away.
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <button onClick={() => startScenario("old")} style={pgBtnPrimary(PGC.red)}>
-                  Open Old World Scenario
-                </button>
-                <button onClick={() => startScenario("smart")} style={pgBtnPrimary(PGC.green)}>
-                  Open Smart Delivery Note Scenario
-                </button>
-              </div>
-            </div>
+      <div style={{ maxWidth: 1500, margin: "0 auto" }}>
+        <header style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
+          <div>
+            <div style={{ color: C.yellow, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 800, letterSpacing: 1.2 }}>PROCESS GAP SIMULATION</div>
+            <h1 style={{ margin: "5px 0 4px", fontSize: "clamp(25px,4vw,38px)" }}>Same-Day & Same Shipping Point</h1>
+            <div style={{ color: C.dim, maxWidth: 900 }}>One customer order with two positions: one item is already on stock, while the second item becomes available after inbound put-away.</div>
           </div>
-        </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateRows: "auto 1fr auto", minHeight: "100vh" }}>
-          <header style={{ padding: "16px 18px", borderBottom: `1px solid ${PGC.line}`, background: PGC.panel, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ color: PGC.yellow, textTransform: "uppercase", letterSpacing: "0.12em", fontSize: 12, fontWeight: 800, marginBottom: 6 }}>Process Gap Simulation</div>
-              <h1 style={{ margin: 0, fontSize: "clamp(22px,3vw,32px)" }}>Same-Day & Same Shipping Point</h1>
-              <div style={{ color: PGC.dim, marginTop: 6, lineHeight: 1.45, maxWidth: 820 }}>
-                One customer order, two positions, one shipping point. Compare the old world against Smart Delivery Note Creation.
-              </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ ...card(C.orange, true), minWidth: 116, textAlign: "center" }}>
+              <div style={{ color: C.dim, fontSize: 9, letterSpacing: 1 }}>SIMULATION TIME</div>
+              <div style={{ fontSize: 21, fontWeight: 800 }}>{clock}</div>
             </div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ padding: "10px 12px", borderRadius: 12, border: `1px solid ${PGC.line}`, background: PGC.panel2 }}>
-                <div style={{ fontSize: 11, color: PGC.dim, textTransform: "uppercase", letterSpacing: "0.1em" }}>Simulation time</div>
-                <div style={{ fontWeight: 800, fontSize: 20 }}>{simClock}</div>
-              </div>
-              <button onClick={() => onHome?.()} style={pgBtnGhost()}>Home</button>
-            </div>
-          </header>
+            <button onClick={onHome} style={{ border: `1px solid ${C.line}`, background: C.panel2, color: C.text, borderRadius: 10, padding: "10px 13px", cursor: "pointer", fontWeight: 700 }}>← Home</button>
+          </div>
+        </header>
 
-          <main style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 360px", gap: 14, padding: 14 }}>
-            <section style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 16, overflow: "hidden", position: "relative" }}>
-              <div ref={mountRef} style={{ width: "100%", height: "72vh", minHeight: 520 }} />
-              <div style={{ position: "absolute", left: 12, bottom: 12, background: "rgba(11,17,24,0.84)", border: `1px solid ${PGC.line}`, color: PGC.dim, borderRadius: 10, padding: "8px 10px", fontSize: 12 }}>
-                Drag to rotate · Scroll to zoom
-              </div>
-              <div style={{ position: "absolute", left: 12, top: 12, maxWidth: 520, background: "rgba(11,17,24,0.88)", border: `1px solid ${PGC.line}`, borderRadius: 12, padding: "12px 14px" }}>
-                <div style={{ color: scenario === "old" ? PGC.red : PGC.green, fontSize: 12, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>{scenarioData.summary.title}</div>
-                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>{scenarioData.summary.subtitle}</div>
-                <div style={{ color: PGC.dim, fontSize: 13, lineHeight: 1.45 }}>{activeEvent}</div>
+        <div className="pg-grid">
+          <main style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <section style={{ ...card(old ? C.red : C.green, true), padding: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <div>
+                  <div style={{ color: old ? C.red : C.green, fontSize: 11, fontWeight: 800, letterSpacing: 1.1 }}>{old ? "OLD WORLD" : "SMART DELIVERY NOTE CREATION JOB"}</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, marginTop: 4 }}>{old ? "Immediate creation causes a split shipment" : "Controlled creation consolidates both positions"}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button onClick={() => switchScenario("old")} style={{ border: `1px solid ${scenario === "old" ? C.red : C.line}`, background: scenario === "old" ? `${C.red}18` : C.panel, color: scenario === "old" ? C.red : C.text, borderRadius: 9, padding: "9px 11px", cursor: "pointer", fontWeight: 800 }}>Old World</button>
+                  <button onClick={() => switchScenario("smart")} style={{ border: `1px solid ${scenario === "smart" ? C.green : C.line}`, background: scenario === "smart" ? `${C.green}18` : C.panel, color: scenario === "smart" ? C.green : C.text, borderRadius: 9, padding: "9px 11px", cursor: "pointer", fontWeight: 800 }}>Smart Job</button>
+                </div>
               </div>
             </section>
 
-            <aside style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ border: `1px solid ${scenario === "old" ? PGC.red : PGC.green}`, background: PGC.panel2, borderRadius: 16, padding: 16 }}>
-                <div style={{ color: PGC.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 11, marginBottom: 8 }}>Scenario switch</div>
-                <div style={{ display: "grid", gap: 10 }}>
-                  <button onClick={() => { setScenario("old"); resetSim(); }} style={pgScenarioBtn(scenario === "old", PGC.red)}>Old world</button>
-                  <button onClick={() => { setScenario("smart"); resetSim(); }} style={pgScenarioBtn(scenario === "smart", PGC.green)}>Smart Delivery Note Creation Job</button>
+            <section style={{ ...card(C.blue), padding: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 800 }}>Customer Order 4711</div>
+                  <div style={{ color: C.dim, fontSize: 13 }}>Created at 10:00 · Same shipping point · Both articles fit into one parcel</div>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <span style={flowItem("", C.green)}>Position 10 · Item A · On stock</span>
+                  <span style={flowItem("", C.orange)}>Position 20 · Item B · Inbound</span>
                 </div>
               </div>
 
-              <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 16, padding: 16 }}>
-                <div style={{ color: PGC.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 11, marginBottom: 10 }}>Controls</div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-                  <button onClick={() => setPlaying((v) => !v)} style={pgBtnPrimary(playing ? PGC.orange : PGC.green)}>{playing ? "Pause" : "Start"}</button>
-                  <button onClick={resetSim} style={pgBtnGhost()}>Reset</button>
+              <div className="pg-flow">
+                <div style={areaStyle(C.blue)}>
+                  <div style={{ color: C.blue, fontSize: 10, fontWeight: 800, letterSpacing: 1 }}>CUSTOMER ORDER</div>
+                  <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
+                    <div style={flowItem("", C.green)}>Item A</div>
+                    <div style={flowItem("", C.orange)}>Item B</div>
+                  </div>
                 </div>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, color: PGC.dim, fontSize: 14 }}>
-                  Speed
-                  <input type="range" min="0.6" max="2.0" step="0.1" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} />
-                  <span style={{ color: PGC.text, minWidth: 34 }}>{speed.toFixed(1)}×</span>
-                </label>
-              </div>
-
-              <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 16, padding: 16 }}>
-                <div style={{ color: PGC.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 11, marginBottom: 10 }}>Business impact</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <PGMetric label="Delivery Notes" value={String(scenarioData.summary.deliveryNotes)} />
-                  <PGMetric label="Parcels" value={String(scenarioData.summary.parcels)} />
-                  <PGMetric label="Transport Cost" value={scenarioData.summary.transportCosts} />
-                  <PGMetric label="Packing Result" value={scenario === "old" ? "split" : "combined"} />
+                <div className="pg-arrow">→</div>
+                <div style={areaStyle(C.orange)}>
+                  <div style={{ color: C.orange, fontSize: 10, fontWeight: 800, letterSpacing: 1 }}>INBOUND / STORAGE</div>
+                  <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
+                    <div style={flowItem("", C.green, itemAStage === "storage")}>Item A · stored</div>
+                    <div style={flowItem("", C.orange, itemBStage === "inbound")}>Item B · put-away</div>
+                    <div style={flowItem("", C.orange, itemBStage === "storage")}>Item B · stored</div>
+                  </div>
                 </div>
-                <div style={{ marginTop: 12, color: PGC.dim, lineHeight: 1.5, fontSize: 14 }}>{scenarioData.summary.outcome}</div>
+                <div className="pg-arrow">→</div>
+                <div style={areaStyle(C.yellow)}>
+                  <div style={{ color: C.yellow, fontSize: 10, fontWeight: 800, letterSpacing: 1 }}>DELIVERY NOTE CREATION</div>
+                  <div style={{ marginTop: 17, fontSize: 34, fontWeight: 900 }}>{dnCount}</div>
+                  <div style={{ color: C.dim, fontSize: 12 }}>{dnCount === 1 ? "delivery note" : "delivery notes"}</div>
+                  {!old && progress < 72 && <div style={{ marginTop: 8, color: C.yellow, fontSize: 11, fontWeight: 700 }}>Job waits for both positions</div>}
+                </div>
+                <div className="pg-arrow">→</div>
+                <div style={areaStyle(C.green)}>
+                  <div style={{ color: C.green, fontSize: 10, fontWeight: 800, letterSpacing: 1 }}>PACKING & SHIPPING</div>
+                  <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
+                    <div style={flowItem("", C.purple, parcelCount >= 1)}>Parcel {old ? "1" : "1 combined"}</div>
+                    {old && <div style={flowItem("", C.red, parcelCount >= 2)}>Parcel 2</div>}
+                  </div>
+                </div>
               </div>
+            </section>
 
-              <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 16, padding: 16, flex: 1 }}>
-                <div style={{ color: PGC.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 11, marginBottom: 10 }}>Scenario logic</div>
-                <ul style={{ margin: 0, paddingLeft: 18, color: PGC.dim, lineHeight: 1.6, fontSize: 14 }}>
-                  <li>Customer creates one order with two positions at 10:00.</li>
-                  <li>Position 1 is already on stock.</li>
-                  <li>Position 2 becomes available only after inbound put-away around 12:00.</li>
-                  {scenario === "old" ? (
-                    <>
-                      <li>The system creates the first delivery note immediately for the stock item.</li>
-                      <li>Two hours later a second delivery note is created for position 2.</li>
-                      <li>Both positions would fit into one parcel, but the old world sends two parcels.</li>
-                    </>
-                  ) : (
-                    <>
-                      <li>The Smart Delivery Note Creation Job waits until both positions are available.</li>
-                      <li>One combined delivery note is created for both order lines.</li>
-                      <li>Both items are packed together into one parcel.</li>
-                    </>
-                  )}
-                </ul>
+            <section style={{ ...card(C.line), padding: 14 }}>
+              <div style={{ height: 8, borderRadius: 999, background: C.panel2, overflow: "hidden", marginBottom: 12 }}>
+                <div style={{ height: "100%", width: `${progress}%`, background: old ? C.red : C.green, transition: "width .08s linear" }} />
               </div>
-            </aside>
-          </main>
-
-          <footer style={{ borderTop: `1px solid ${PGC.line}`, background: PGC.panel, padding: "12px 14px" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}>
-              <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
-                {visibleEvents.map((ev, idx) => (
-                  <div key={`${ev.t}-${idx}`} style={{ flex: "0 0 auto", border: `1px solid ${ev.tone === "err" ? PGC.red : ev.tone === "ok" ? PGC.green : PGC.line}`, background: PGC.panel2, borderRadius: 999, padding: "8px 12px", color: ev.tone === "err" ? PGC.red : ev.tone === "ok" ? PGC.green : PGC.text, fontSize: 12, whiteSpace: "nowrap" }}>
-                    {ev.label}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 8 }}>
+                {stages.map((s, i) => (
+                  <div key={s.title} style={{ ...card(s.tone, i <= phase), minHeight: 112 }}>
+                    <div style={{ color: i <= phase ? s.tone : C.dim, fontSize: 11, fontWeight: 800 }}>{s.title}</div>
+                    <div style={{ color: C.dim, fontSize: 12, lineHeight: 1.45, marginTop: 7 }}>{s.text}</div>
                   </div>
                 ))}
               </div>
-              <div style={{ color: PGC.dim, fontSize: 12, whiteSpace: "nowrap" }}>
-                Topic: <span style={{ color: PGC.text }}>Same-Day & Same Shipping Point</span>
+            </section>
+          </main>
+
+          <aside style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <section style={{ ...card(C.line), padding: 14 }}>
+              <div style={{ color: C.dim, fontSize: 10, letterSpacing: 1, marginBottom: 10 }}>CONTROLS</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <button onClick={() => setPlaying((v) => !v)} style={{ border: `1px solid ${playing ? C.orange : C.green}`, background: playing ? `${C.orange}18` : `${C.green}18`, color: playing ? C.orange : C.green, borderRadius: 9, padding: "10px 13px", cursor: "pointer", fontWeight: 800, flex: 1 }}>{playing ? "Pause" : progress >= 100 ? "Replay" : "Start"}</button>
+                <button onClick={reset} style={{ border: `1px solid ${C.line}`, background: C.panel2, color: C.text, borderRadius: 9, padding: "10px 13px", cursor: "pointer", fontWeight: 700 }}>Reset</button>
               </div>
-            </div>
-          </footer>
+              <label style={{ color: C.dim, fontSize: 12, display: "grid", gap: 6 }}>
+                Simulation speed
+                <input type="range" min="0.6" max="2" step="0.1" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} />
+              </label>
+            </section>
+
+            <section style={{ ...card(old ? C.red : C.green, true), padding: 14 }}>
+              <div style={{ color: C.dim, fontSize: 10, letterSpacing: 1, marginBottom: 10 }}>BUSINESS IMPACT</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {[
+                  ["Delivery notes", old ? 2 : 1],
+                  ["Parcels", old ? 2 : 1],
+                  ["Transport cost", old ? "2×" : "1×"],
+                  ["Consolidation", old ? "No" : "Yes"],
+                ].map(([l, v]) => <div key={l} style={card(C.line)}><div style={{ color: C.dim, fontSize: 10 }}>{l}</div><div style={{ fontSize: 23, fontWeight: 900, marginTop: 5 }}>{v}</div></div>)}
+              </div>
+            </section>
+
+            <section style={{ ...card(C.line), padding: 14 }}>
+              <div style={{ color: C.dim, fontSize: 10, letterSpacing: 1, marginBottom: 10 }}>CORE MESSAGE</div>
+              <div style={{ color: old ? C.red : C.green, fontWeight: 800, fontSize: 17, marginBottom: 8 }}>{old ? "Early creation splits the customer order." : "Delayed creation preserves consolidation."}</div>
+              <div style={{ color: C.dim, lineHeight: 1.55, fontSize: 13 }}>{old ? "The first available position triggers a delivery note before the second position completes put-away. The result is two parcels and two transport charges." : "The creation job waits until both positions are physically available at the same shipping point. One delivery note and one parcel are created."}</div>
+            </section>
+          </aside>
         </div>
-      )}
-
-      <style>{`
-        button, input { font: inherit; }
-        @media (max-width: 980px) {
-          main { grid-template-columns: 1fr !important; }
-        }
-      `}</style>
+      </div>
     </div>
   );
-}
-
-function PGMetric({ label, value }) {
-  return (
-    <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel2, borderRadius: 12, padding: 12 }}>
-      <div style={{ color: PGC.dim, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>{label}</div>
-      <div style={{ fontWeight: 800, fontSize: 22 }}>{value}</div>
-    </div>
-  );
-}
-
-function pgBtnPrimary(accent) {
-  return {
-    border: `1px solid ${accent}`,
-    background: accent === PGC.green ? "rgba(61,220,132,0.12)" : accent === PGC.red ? "rgba(255,107,107,0.12)" : "rgba(255,159,67,0.12)",
-    color: accent,
-    borderRadius: 12,
-    padding: "11px 14px",
-    fontWeight: 800,
-    cursor: "pointer",
-  };
-}
-function pgBtnGhost() {
-  return {
-    border: `1px solid ${PGC.line}`,
-    background: PGC.panel2,
-    color: PGC.text,
-    borderRadius: 12,
-    padding: "11px 14px",
-    fontWeight: 700,
-    cursor: "pointer",
-  };
-}
-function pgScenarioBtn(active, accent) {
-  return {
-    textAlign: "left",
-    border: `1px solid ${active ? accent : PGC.line}`,
-    background: active ? "rgba(255,255,255,0.04)" : PGC.panel,
-    color: active ? accent : PGC.text,
-    borderRadius: 12,
-    padding: "12px 14px",
-    fontWeight: 800,
-    cursor: "pointer",
-  };
 }
 
 export default function SupplyChainSim() {
