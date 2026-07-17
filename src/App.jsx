@@ -1342,6 +1342,19 @@ function ProcessGapSimulation({ onHome }) {
     return()=>{cancelAnimationFrame(raf);window.removeEventListener("resize",resize);window.removeEventListener("mousemove",move);window.removeEventListener("mouseup",up);renderer.domElement.removeEventListener("mousedown",down);renderer.domElement.removeEventListener("wheel",wheel);scene.traverse(o=>{o.geometry?.dispose?.();if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{m.map?.dispose?.();m.dispose?.();});}});renderer.dispose();renderer.domElement.remove();};
   }, []);
 
+  const pgBtn = (active) => ({
+    background: active ? PGC.blue : PGC.panel2,
+    color: active ? PGC.bg : PGC.text,
+    border: `1px solid ${active ? PGC.blue : PGC.line}`,
+    borderRadius: 8,
+    padding: "8px 12px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  });
+
   const reset=()=>{runtime.current.t=0;runtime.current.playing=false;setPlaying(false);setHud({clock:"10:00",message:mode==="old"?"Old world selected — immediate delivery-note creation":"Smart job selected — wait for both positions",parcels:0,dns:0,cost:"—"});};
   const choose=(next)=>{runtime.current.mode=next;setMode(next);};
   return (
@@ -1349,7 +1362,7 @@ function ProcessGapSimulation({ onHome }) {
       <div style={{minHeight:66,padding:"10px 14px",borderBottom:`1px solid ${C.line}`,display:"flex",alignItems:"center",gap:12,background:C.panel}}>
         <div style={{marginRight:"auto"}}><div style={{fontSize:18,fontWeight:800}}>Process Gap Simulation · Same-Day & Same Shipping Point</div><div style={{fontSize:11,color:C.dim,fontFamily:"'IBM Plex Mono',monospace",marginTop:3}}>One customer order · two positions · one shipping point · 3D warehouse view</div></div>
         <div style={{padding:"7px 11px",border:`1px solid ${C.orange}`,borderRadius:8,background:"rgba(255,140,66,.08)",textAlign:"center",minWidth:105}}><div style={{fontSize:8,color:C.dim,letterSpacing:1}}>SIMULATION TIME</div><div style={{fontSize:18,fontWeight:900}}>{hud.clock}</div></div>
-        <button style={btn(false)} onClick={onHome}>⌂ Home</button>
+        <button style={pgBtn(false)} onClick={onHome}>⌂ Home</button>
       </div>
       <div style={{flex:1,position:"relative",minHeight:0}}>
         <div ref={mountRef} style={{position:"absolute",inset:0}} />
@@ -1361,11 +1374,11 @@ function ProcessGapSimulation({ onHome }) {
         <div style={{position:"absolute",top:12,right:12,width:260,display:"grid",gap:9}}>
           <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
             <div style={{fontSize:9,color:C.dim,letterSpacing:1,marginBottom:8}}>SCENARIO</div>
-            <button onClick={()=>choose("old")} style={{...btn(mode==="old"),width:"100%",marginBottom:7,borderColor:C.red,color:mode==="old"?C.bg:C.red,background:mode==="old"?C.red:"transparent"}}>Old world</button>
-            <button onClick={()=>choose("smart")} style={{...btn(mode==="smart"),width:"100%",borderColor:C.green,color:mode==="smart"?C.bg:C.green,background:mode==="smart"?C.green:"transparent"}}>Smart DN Job</button>
+            <button onClick={()=>choose("old")} style={{...pgBtn(mode==="old"),width:"100%",marginBottom:7,borderColor:C.red,color:mode==="old"?C.bg:C.red,background:mode==="old"?C.red:"transparent"}}>Old world</button>
+            <button onClick={()=>choose("smart")} style={{...pgBtn(mode==="smart"),width:"100%",borderColor:C.green,color:mode==="smart"?C.bg:C.green,background:mode==="smart"?C.green:"transparent"}}>Smart DN Job</button>
           </div>
           <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
-            <div style={{display:"flex",gap:7}}><button onClick={()=>{runtime.current.playing=!runtime.current.playing;setPlaying(runtime.current.playing);}} style={{...btn(true),flex:1,background:playing?C.orange:C.green,borderColor:playing?C.orange:C.green,color:C.bg}}>{playing?"Pause":"Start"}</button><button onClick={reset} style={btn(false)}>Reset</button></div>
+            <div style={{display:"flex",gap:7}}><button onClick={()=>{runtime.current.playing=!runtime.current.playing;setPlaying(runtime.current.playing);}} style={{...pgBtn(true),flex:1,background:playing?C.orange:C.green,borderColor:playing?C.orange:C.green,color:C.bg}}>{playing?"Pause":"Start"}</button><button onClick={reset} style={pgBtn(false)}>Reset</button></div>
             <label style={{display:"flex",alignItems:"center",gap:7,marginTop:9,fontSize:11,color:C.dim}}>Speed<input type="range" min="0.6" max="2" step="0.1" value={speed} onChange={e=>{const v=Number(e.target.value);runtime.current.speed=v;setSpeed(v);}}/><span>{speed.toFixed(1)}×</span></label>
           </div>
           <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
