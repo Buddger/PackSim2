@@ -914,6 +914,712 @@ function buildChainData(packScenario = 4) {
 
 
 // ---------- main component ----------
+
+const PGC = {
+  bg: "#0b1118",
+  panel: "#121b24",
+  panel2: "#182431",
+  line: "#263546",
+  text: "#e8edf4",
+  dim: "#94a3b8",
+  blue: "#4da3ff",
+  green: "#3ddc84",
+  orange: "#ff9f43",
+  yellow: "#ffd166",
+  red: "#ff6b6b",
+  purple: "#b084ff",
+};
+
+function pgMakeTextSprite(text, color = "#ffffff", bg = "rgba(10,16,24,0.92)", fontSize = 46, scale = 0.010) {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  ctx.font = `700 ${fontSize}px Arial`;
+  const w = Math.ceil(ctx.measureText(text).width + 34);
+  const h = Math.ceil(fontSize * 1.7);
+  canvas.width = w;
+  canvas.height = h;
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "rgba(255,255,255,0.14)";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, w - 4, h - 4);
+  ctx.font = `700 ${fontSize}px Arial`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = color;
+  ctx.fillText(text, w / 2, h / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(w * scale, h * scale, 1);
+  sprite.renderOrder = 20;
+  return sprite;
+}
+
+function pgBox(sceneOrGroup, x, y, z, w, h, d, color, rough = 0.72, metal = 0.08) {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal })
+  );
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  sceneOrGroup.add(mesh);
+  return mesh;
+}
+
+function pgCreateParcel(color, labelText) {
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(0.95, 0.62, 0.68),
+    new THREE.MeshStandardMaterial({ color: 0xc9975b, roughness: 0.86, metalness: 0.02 })
+  );
+  m.position.y = 0.31;
+  m.castShadow = true;
+  m.receiveShadow = true;
+  g.add(m);
+  const stripe = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.64, 0.7),
+    new THREE.MeshStandardMaterial({ color: 0xa9723b, roughness: 0.9, metalness: 0.02 })
+  );
+  stripe.position.set(0, 0.31, 0);
+  g.add(stripe);
+  const tag = pgMakeTextSprite(labelText, color, "rgba(12,18,28,0.9)", 30, 0.0055);
+  tag.position.set(0, 0.84, 0);
+  g.add(tag);
+  return g;
+}
+
+function pgCreateItem(color, labelText) {
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(0.52, 0.36, 0.42),
+    new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.7, metalness: 0.05 })
+  );
+  m.position.y = 0.18;
+  m.castShadow = true;
+  m.receiveShadow = true;
+  g.add(m);
+  const tag = pgMakeTextSprite(labelText, color, "rgba(12,18,28,0.88)", 24, 0.0048);
+  tag.position.set(0, 0.62, 0);
+  g.add(tag);
+  return g;
+}
+
+function pgCreateDocument(label = "DN") {
+  const g = new THREE.Group();
+  const paper = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.68, 0.88),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
+  );
+  paper.rotation.x = -Math.PI / 2;
+  g.add(paper);
+  const tag = pgMakeTextSprite(label, PGC.blue, "rgba(255,255,255,0.92)", 24, 0.0049);
+  tag.position.set(0, 0.1, 0);
+  g.add(tag);
+  return g;
+}
+
+function pgLerpPath(path, t) {
+  if (!path || path.length === 0) return [0, 0, 0, 0];
+  if (t <= path[0][0]) return path[0];
+  for (let i = 1; i < path.length; i += 1) {
+    const a = path[i - 1];
+    const b = path[i];
+    if (t <= b[0]) {
+      const f = (t - a[0]) / Math.max(0.0001, b[0] - a[0]);
+      return [t, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f];
+    }
+  }
+  return path[path.length - 1];
+}
+
+function pgHhmm(totalMinutes) {
+  const h = Math.floor(totalMinutes / 60);
+  const m = Math.floor(totalMinutes % 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function pgBuildScenarioData(mode) {
+  const oldWorld = mode === "old";
+  const duration = 11.5;
+  const startMinutes = 10 * 60;
+  const endMinutes = 12 * 60 + 45;
+  const minuteAt = (t) => startMinutes + (t / duration) * (endMinutes - startMinutes);
+
+  const P = {
+    order: [-12.5, 0.6, -4.5],
+    inbound: [-12.0, 0.35, 4.8],
+    storageA: [-4.6, 0.5, 4.3],
+    storageB: [-3.1, 0.5, 5.2],
+    dnPrinter: [0.0, 0.7, 0.2],
+    packingIn: [4.2, 0.7, -0.4],
+    packTable: [6.4, 1.02, -0.2],
+    shipping: [12.6, 0.7, -0.2],
+    parcelLane: [9.1, 0.7, -0.2],
+  };
+
+  const entities = [];
+  const events = [
+    { t: 0.0, label: `${pgHhmm(minuteAt(0))} · Customer order created with 2 positions`, tone: "info" },
+    { t: 0.1, label: `${pgHhmm(minuteAt(0.1))} · Position 1 is already on stock`, tone: "ok" },
+    { t: 0.15, label: `${pgHhmm(minuteAt(0.15))} · Position 2 still waits for inbound put-away`, tone: "warn" },
+  ];
+
+  // Static visible items in zones
+  entities.push({
+    key: "itemA_stock",
+    kind: "item",
+    color: PGC.green,
+    label: "Item A · stock",
+    start: 0,
+    end: oldWorld ? 1.9 : 8.5,
+    path: [[0, ...P.storageA]],
+  });
+  entities.push({
+    key: "itemB_inbound",
+    kind: "item",
+    color: PGC.orange,
+    label: "Item B · inbound",
+    start: 0,
+    end: 6.25,
+    path: [[0, ...P.inbound]],
+  });
+
+  // Item B put-away after 2h
+  entities.push({
+    key: "itemB_putaway",
+    kind: "item",
+    color: PGC.orange,
+    label: "Item B",
+    start: 6.25,
+    end: oldWorld ? 9.2 : 9.15,
+    path: [
+      [6.25, ...P.inbound],
+      [7.25, -8.0, 0.35, 5.0],
+      [8.05, ...P.storageB],
+    ],
+  });
+  events.push({ t: 8.05, label: `${pgHhmm(minuteAt(8.05))} · Position 2 has been put away to storage`, tone: "ok" });
+
+  if (oldWorld) {
+    events.push({ t: 0.45, label: `${pgHhmm(minuteAt(0.45))} · Old world: delivery note is created immediately for the stock position`, tone: "err" });
+    entities.push({ key: "dn1", kind: "doc", label: "DN 1", start: 0.45, end: 1.25, path: [[0.45, ...P.dnPrinter], [1.25, 2.8, 0.72, -0.2]] });
+    entities.push({ key: "pickA", kind: "item", color: PGC.green, label: "Item A", start: 1.0, end: 2.35, path: [[1.0, ...P.storageA], [1.6, 0.8, 0.52, 3.4], [2.35, ...P.packTable]] });
+    entities.push({ key: "parcel1", kind: "parcel", color: PGC.green, label: "Parcel 1", start: 2.6, end: 4.1, path: [[2.6, ...P.packTable], [3.3, ...P.parcelLane], [4.1, ...P.shipping]] });
+    events.push({ t: 4.1, label: `${pgHhmm(minuteAt(4.1))} · First parcel ships as a standalone delivery`, tone: "err" });
+
+    events.push({ t: 8.25, label: `${pgHhmm(minuteAt(8.25))} · A second delivery note is created after item B becomes available`, tone: "err" });
+    entities.push({ key: "dn2", kind: "doc", label: "DN 2", start: 8.25, end: 8.95, path: [[8.25, ...P.dnPrinter], [8.95, 2.8, 0.72, -0.2]] });
+    entities.push({ key: "pickB", kind: "item", color: PGC.orange, label: "Item B", start: 8.55, end: 9.7, path: [[8.55, ...P.storageB], [9.0, 0.8, 0.52, 3.4], [9.7, ...P.packTable]] });
+    entities.push({ key: "parcel2", kind: "parcel", color: PGC.orange, label: "Parcel 2", start: 9.95, end: 11.0, path: [[9.95, ...P.packTable], [10.45, ...P.parcelLane], [11.0, ...P.shipping]] });
+    events.push({ t: 11.0, label: `${pgHhmm(minuteAt(11.0))} · Second parcel ships separately → 2× transport cost`, tone: "err" });
+  } else {
+    events.push({ t: 0.45, label: `${pgHhmm(minuteAt(0.45))} · Smart Delivery Note Creation Job: no delivery note is created yet`, tone: "info" });
+    events.push({ t: 0.8, label: `${pgHhmm(minuteAt(0.8))} · Position 1 stays reserved on stock until position 2 is available`, tone: "info" });
+    entities.push({ key: "holdA", kind: "item", color: PGC.green, label: "Item A reserved", start: 0.8, end: 8.45, path: [[0.8, -4.9, 0.55, 3.3]] });
+    events.push({ t: 8.3, label: `${pgHhmm(minuteAt(8.3))} · Both positions are now available at the same shipping point`, tone: "ok" });
+    entities.push({ key: "dnSmart", kind: "doc", label: "1 combined DN", start: 8.35, end: 9.1, path: [[8.35, ...P.dnPrinter], [9.1, 2.7, 0.72, -0.2]] });
+    events.push({ t: 8.4, label: `${pgHhmm(minuteAt(8.4))} · One smart delivery note is created for both positions`, tone: "ok" });
+    entities.push({ key: "pickA2", kind: "item", color: PGC.green, label: "Item A", start: 8.6, end: 9.45, path: [[8.6, ...P.storageA], [9.0, 0.8, 0.52, 3.4], [9.45, 5.7, 1.02, -0.45]] });
+    entities.push({ key: "pickB2", kind: "item", color: PGC.orange, label: "Item B", start: 8.75, end: 9.55, path: [[8.75, ...P.storageB], [9.1, 0.8, 0.52, 3.4], [9.55, 7.05, 1.02, 0.1]] });
+    entities.push({ key: "combinedParcel", kind: "parcel", color: PGC.purple, label: "1 combined parcel", start: 9.9, end: 11.1, path: [[9.9, ...P.packTable], [10.45, ...P.parcelLane], [11.1, ...P.shipping]] });
+    events.push({ t: 11.1, label: `${pgHhmm(minuteAt(11.1))} · One parcel ships with both positions → 1× transport cost`, tone: "ok" });
+  }
+
+  return {
+    mode,
+    duration,
+    minuteAt,
+    entities,
+    events,
+    summary: oldWorld
+      ? {
+          title: "Old world",
+          subtitle: "Immediate delivery note creation causes split shipment",
+          parcels: 2,
+          deliveryNotes: 2,
+          transportCosts: "2×",
+          outcome: "Two separate parcels leave although both articles would fit into one package.",
+        }
+      : {
+          title: "Smart Delivery Note Creation Job",
+          subtitle: "Wait until both positions are available at the same shipping point",
+          parcels: 1,
+          deliveryNotes: 1,
+          transportCosts: "1×",
+          outcome: "Both articles are combined into one parcel, avoiding duplicate transport costs.",
+        },
+  };
+}
+
+function ProcessGapSimulation({ onHome }) {
+  const [screen, setScreen] = useState("process-gap");
+  const [scenario, setScenario] = useState("old");
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [simTime, setSimTime] = useState(0);
+  const [activeEvent, setActiveEvent] = useState("");
+  const mountRef = useRef(null);
+  const simRef = useRef({ playing: false, speed: 1, t: 0, duration: 11.5 });
+  const sceneCtx = useRef(null);
+
+  const scenarioData = useMemo(() => pgBuildScenarioData(scenario), [scenario]);
+
+  useEffect(() => {
+    simRef.current.playing = playing;
+  }, [playing]);
+  useEffect(() => {
+    simRef.current.speed = speed;
+  }, [speed]);
+
+  useEffect(() => {
+    if (screen !== "process-gap") return undefined;
+    const mount = mountRef.current;
+    if (!mount) return undefined;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(PGC.bg);
+    scene.fog = new THREE.Fog(0x0b1118, 24, 54);
+    const camera = new THREE.PerspectiveCamera(50, mount.clientWidth / mount.clientHeight, 0.1, 100);
+    camera.position.set(18, 15, 21);
+    camera.lookAt(0, 0.9, 0.8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(mount.clientWidth, mount.clientHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    mount.appendChild(renderer.domElement);
+
+    const hemi = new THREE.HemisphereLight(0xdce8ff, 0x1a2330, 1.85);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+    sun.position.set(10, 20, 8);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -28;
+    sun.shadow.camera.right = 28;
+    sun.shadow.camera.top = 28;
+    sun.shadow.camera.bottom = -28;
+    scene.add(sun);
+
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(48, 28),
+      new THREE.MeshStandardMaterial({ color: 0x0f1620, roughness: 0.95, metalness: 0.02 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    const grid = new THREE.GridHelper(48, 24, 0x293547, 0x182230);
+    grid.position.y = 0.01;
+    scene.add(grid);
+
+    // colored areas
+    pgBox(scene, -11.6, 0.02, -4.5, 5.4, 0.04, 4.0, 0x1a2230);
+    pgBox(scene, -11.0, 0.02, 4.8, 6.2, 0.04, 5.2, 0x15253a);
+    pgBox(scene, -4.2, 0.02, 4.8, 7.2, 0.04, 5.8, 0x332a14);
+    pgBox(scene, 0.0, 0.02, 0.2, 4.4, 0.04, 3.8, 0x20273a);
+    pgBox(scene, 6.4, 0.02, -0.2, 6.8, 0.04, 4.8, 0x16311f);
+    pgBox(scene, 12.1, 0.02, -0.2, 5.0, 0.04, 4.8, 0x2a2216);
+
+    // order desk
+    pgBox(scene, -12.5, 0.45, -4.5, 2.0, 0.9, 1.2, 0x52606f);
+    const orderSign = pgMakeTextSprite("CUSTOMER ORDER", PGC.blue);
+    orderSign.position.set(-12.5, 2.35, -4.5); scene.add(orderSign);
+    const topicSign = pgMakeTextSprite("SAME-DAY & SAME SHIPPING POINT", PGC.yellow, "rgba(16,22,31,0.95)", 34, 0.0084);
+    topicSign.position.set(-7.2, 3.35, -4.55); scene.add(topicSign);
+
+    // inbound
+    pgBox(scene, -12.2, 0.55, 4.8, 2.8, 1.1, 2.2, 0x59677a);
+    const inboundSign = pgMakeTextSprite("INBOUND / PUT-AWAY", PGC.blue, "rgba(12,18,28,0.92)", 38, 0.0082);
+    inboundSign.position.set(-11.2, 2.95, 4.8); scene.add(inboundSign);
+
+    // storage racks
+    for (let i = 0; i < 3; i += 1) {
+      const x = -5.8 + i * 1.8;
+      pgBox(scene, x, 1.45, 4.4, 1.0, 2.9, 0.6, 0x667488);
+      pgBox(scene, x, 0.55, 4.4, 1.1, 0.08, 0.7, 0x7f8b9a);
+      pgBox(scene, x, 1.45, 4.4, 1.1, 0.08, 0.7, 0x7f8b9a);
+      pgBox(scene, x, 2.35, 4.4, 1.1, 0.08, 0.7, 0x7f8b9a);
+    }
+    const storageSign = pgMakeTextSprite("STORAGE", PGC.yellow, "rgba(12,18,28,0.92)", 42, 0.0084);
+    storageSign.position.set(-4.2, 3.2, 4.85); scene.add(storageSign);
+
+    // DN printer
+    pgBox(scene, 0.0, 0.62, 0.2, 1.1, 1.24, 0.9, 0x2e3b4b);
+    const dnSign = pgMakeTextSprite("DELIVERY NOTE PRINTER", PGC.dim, "rgba(12,18,28,0.9)", 28, 0.0069);
+    dnSign.position.set(0.0, 2.55, 0.2); scene.add(dnSign);
+
+    // packing table and packer
+    pgBox(scene, 6.4, 1.0, -0.2, 2.4, 0.16, 1.6, 0x6d7a88);
+    [[-0.85,-0.55], [0.85,-0.55], [-0.85,0.55], [0.85,0.55]].forEach(([dx,dz]) => pgBox(scene, 6.4 + dx, 0.5, -0.2 + dz, 0.1, 1.0, 0.1, 0x465160));
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.92, 14), new THREE.MeshStandardMaterial({ color: 0x4d6278, roughness: 0.8 }));
+    body.position.set(5.2, 1.16, 1.1); body.castShadow = true; scene.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 12), new THREE.MeshStandardMaterial({ color: 0xd9a67b, roughness: 0.9 }));
+    head.position.set(5.2, 1.84, 1.1); scene.add(head);
+    const packSign = pgMakeTextSprite("PACKING", PGC.green, "rgba(12,18,28,0.92)", 42, 0.0082);
+    packSign.position.set(6.5, 3.0, -0.2); scene.add(packSign);
+
+    // shipping gate + truck trailer
+    pgBox(scene, 12.6, 0.55, -0.2, 2.8, 1.1, 2.4, 0xcc7a2f);
+    const shipSign = pgMakeTextSprite("SHIPPING", PGC.orange, "rgba(12,18,28,0.92)", 42, 0.0083);
+    shipSign.position.set(12.5, 2.95, -0.2); scene.add(shipSign);
+
+    // arrows
+    const arrows = [];
+    const addArrow = (a, b, color) => {
+      const dir = new THREE.Vector3().subVectors(b, a);
+      const len = dir.length(); dir.normalize();
+      const arrow = new THREE.ArrowHelper(dir, a, len, new THREE.Color(color), 0.7, 0.34);
+      scene.add(arrow); arrows.push(arrow);
+    };
+    addArrow(new THREE.Vector3(-10.0, 0.8, -3.6), new THREE.Vector3(-1.1, 0.8, 0.2), PGC.blue);
+    addArrow(new THREE.Vector3(-10.2, 0.8, 4.8), new THREE.Vector3(-4.7, 0.8, 4.8), PGC.orange);
+    addArrow(new THREE.Vector3(-2.1, 0.8, 4.0), new THREE.Vector3(4.6, 0.8, -0.2), PGC.yellow);
+    addArrow(new THREE.Vector3(7.8, 0.8, -0.2), new THREE.Vector3(12.0, 0.8, -0.2), PGC.green);
+
+    // order board dynamic lines
+    const orderInfo = new THREE.Group();
+    const o1 = pgMakeTextSprite("Order 4711", PGC.text, "rgba(12,18,28,0.94)", 32, 0.0068);
+    o1.position.set(-12.5, 1.95, -4.5); orderInfo.add(o1);
+    const o2 = pgMakeTextSprite("Pos. 10 · Item A · stock", PGC.green, "rgba(12,18,28,0.94)", 24, 0.0056);
+    o2.position.set(-12.5, 1.35, -4.5); orderInfo.add(o2);
+    const o3 = pgMakeTextSprite("Pos. 20 · Item B · inbound", PGC.orange, "rgba(12,18,28,0.94)", 24, 0.0056);
+    o3.position.set(-12.5, 0.76, -4.5); orderInfo.add(o3);
+    scene.add(orderInfo);
+
+    // animated objects
+    const objects = [];
+    scenarioData.entities.forEach((e) => {
+      let obj;
+      if (e.kind === "item") obj = pgCreateItem(e.color, e.label);
+      else if (e.kind === "doc") obj = pgCreateDocument(e.label);
+      else obj = pgCreateParcel(e.color, e.label);
+      obj.visible = false;
+      scene.add(obj);
+      objects.push({ ...e, obj });
+    });
+
+    // camera drag
+    let dragging = false;
+    let last = { x: 0, y: 0 };
+    let yaw = -0.65;
+    let pitch = 0.72;
+    let radius = 28;
+    const target = new THREE.Vector3(0, 0.8, 0.8);
+    const updateCamera = () => {
+      const hr = radius * Math.cos(pitch);
+      camera.position.set(target.x + hr * Math.sin(yaw), target.y + radius * Math.sin(pitch), target.z + hr * Math.cos(yaw));
+      camera.lookAt(target);
+    };
+    updateCamera();
+    const down = (ev) => { dragging = true; last = { x: ev.clientX, y: ev.clientY }; renderer.domElement.setPointerCapture?.(ev.pointerId); };
+    const move = (ev) => {
+      if (!dragging) return;
+      const dx = ev.clientX - last.x; const dy = ev.clientY - last.y;
+      yaw -= dx * 0.0055; pitch = THREE.MathUtils.clamp(pitch + dy * 0.0035, 0.28, 1.08);
+      last = { x: ev.clientX, y: ev.clientY }; updateCamera();
+    };
+    const up = (ev) => { dragging = false; renderer.domElement.releasePointerCapture?.(ev.pointerId); };
+    const wheel = (ev) => { radius = THREE.MathUtils.clamp(radius + ev.deltaY * 0.018, 16, 38); updateCamera(); };
+    renderer.domElement.addEventListener("pointerdown", down);
+    renderer.domElement.addEventListener("pointermove", move);
+    renderer.domElement.addEventListener("pointerup", up);
+    renderer.domElement.addEventListener("pointercancel", up);
+    renderer.domElement.addEventListener("wheel", wheel, { passive: true });
+
+    const clock = new THREE.Clock();
+    simRef.current.t = 0;
+    simRef.current.duration = scenarioData.duration;
+    setSimTime(0);
+    setActiveEvent(scenarioData.events[0]?.label || "");
+
+    let raf = 0;
+    const animate = () => {
+      const dt = Math.min(0.05, clock.getDelta());
+      if (simRef.current.playing) simRef.current.t = Math.min(simRef.current.duration, simRef.current.t + dt * simRef.current.speed);
+      const t = simRef.current.t;
+      setSimTime(t);
+
+      let latest = scenarioData.events[0]?.label || "";
+      for (const ev of scenarioData.events) {
+        if (t >= ev.t) latest = ev.label;
+      }
+      setActiveEvent(latest);
+
+      objects.forEach((e) => {
+        const visible = t >= e.start && t <= (e.end ?? 999);
+        e.obj.visible = visible;
+        if (!visible) return;
+        const [, x, y, z] = pgLerpPath(e.path, t);
+        e.obj.position.set(x, y, z);
+      });
+
+      // subtle pulse on order desk after creation
+      orderInfo.children[0].material.opacity = 0.9 + Math.sin(t * 3.0) * 0.05;
+
+      renderer.render(scene, camera);
+      raf = requestAnimationFrame(animate);
+    };
+    animate();
+
+    const onResize = () => {
+      camera.aspect = mount.clientWidth / mount.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(mount.clientWidth, mount.clientHeight);
+    };
+    window.addEventListener("resize", onResize);
+
+    sceneCtx.current = { renderer };
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", onResize);
+      renderer.domElement.removeEventListener("pointerdown", down);
+      renderer.domElement.removeEventListener("pointermove", move);
+      renderer.domElement.removeEventListener("pointerup", up);
+      renderer.domElement.removeEventListener("pointercancel", up);
+      renderer.domElement.removeEventListener("wheel", wheel);
+      scene.traverse((o) => {
+        if (o.geometry) o.geometry.dispose?.();
+        if (o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          mats.forEach((m) => { if (m.map) m.map.dispose?.(); m.dispose?.(); });
+        }
+      });
+      renderer.dispose();
+      renderer.domElement.remove();
+      sceneCtx.current = null;
+    };
+  }, [screen, scenario, scenarioData]);
+
+  const resetSim = () => {
+    simRef.current.t = 0;
+    setSimTime(0);
+    setPlaying(false);
+    setActiveEvent(scenarioData.events[0]?.label || "");
+  };
+
+  const startScenario = (type) => {
+    setScenario(type);
+    setScreen("process-gap");
+    setPlaying(false);
+    setTimeout(() => {
+      simRef.current.t = 0;
+      setSimTime(0);
+      setPlaying(true);
+    }, 50);
+  };
+
+  const simClock = pgHhmm(scenarioData.minuteAt(simTime));
+  const visibleEvents = scenarioData.events.filter((e) => simTime >= e.t).slice(-6).reverse();
+
+  return (
+    <div style={{ minHeight: "100vh", background: PGC.bg, color: PGC.text, fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+      {screen === "landing" ? (
+        <div style={{ padding: 28, maxWidth: 1280, margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 26, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ color: PGC.yellow, textTransform: "uppercase", letterSpacing: "0.14em", fontSize: 12, fontWeight: 800, marginBottom: 8 }}>Supply Chain 3D Simulation</div>
+              <h1 style={{ margin: 0, fontSize: "clamp(28px,4vw,42px)" }}>Landing Page</h1>
+              <p style={{ margin: "8px 0 0", color: PGC.dim, maxWidth: 860, lineHeight: 1.55 }}>
+                This standalone file focuses on a new process-gap simulation for the Same-Day & Same Shipping Point topic. It visualizes how Smart Delivery Note Creation can avoid split shipments and double transport cost.
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 18 }}>
+            <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 18, padding: 20, opacity: 0.72 }}>
+              <div style={{ color: PGC.blue, fontSize: 12, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 10 }}>Existing Entry</div>
+              <h3 style={{ margin: "0 0 10px" }}>View Current Label Process</h3>
+              <p style={{ margin: 0, color: PGC.dim, lineHeight: 1.5 }}>Placeholder in this standalone file. The focus of this version is the process-gap simulation.</p>
+            </div>
+            <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 18, padding: 20, opacity: 0.72 }}>
+              <div style={{ color: PGC.green, fontSize: 12, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 10 }}>Existing Entry</div>
+              <h3 style={{ margin: "0 0 10px" }}>Compare Future Label Concepts</h3>
+              <p style={{ margin: 0, color: PGC.dim, lineHeight: 1.5 }}>Placeholder in this standalone file. The focus of this version is the process-gap simulation.</p>
+            </div>
+            <div style={{ border: `1px solid ${PGC.yellow}`, background: PGC.panel2, borderRadius: 18, padding: 20, boxShadow: "0 0 0 1px rgba(255,209,102,0.12) inset" }}>
+              <div style={{ color: PGC.yellow, fontSize: 12, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 10 }}>New Entry</div>
+              <h3 style={{ margin: "0 0 10px" }}>Process Gap Simulation</h3>
+              <p style={{ margin: "0 0 14px", color: PGC.dim, lineHeight: 1.55 }}>
+                Visualize the Same-Day & Same Shipping Point issue: one order with two positions, one already on stock and one only available later through inbound put-away.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <button onClick={() => startScenario("old")} style={pgBtnPrimary(PGC.red)}>
+                  Open Old World Scenario
+                </button>
+                <button onClick={() => startScenario("smart")} style={pgBtnPrimary(PGC.green)}>
+                  Open Smart Delivery Note Scenario
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateRows: "auto 1fr auto", minHeight: "100vh" }}>
+          <header style={{ padding: "16px 18px", borderBottom: `1px solid ${PGC.line}`, background: PGC.panel, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ color: PGC.yellow, textTransform: "uppercase", letterSpacing: "0.12em", fontSize: 12, fontWeight: 800, marginBottom: 6 }}>Process Gap Simulation</div>
+              <h1 style={{ margin: 0, fontSize: "clamp(22px,3vw,32px)" }}>Same-Day & Same Shipping Point</h1>
+              <div style={{ color: PGC.dim, marginTop: 6, lineHeight: 1.45, maxWidth: 820 }}>
+                One customer order, two positions, one shipping point. Compare the old world against Smart Delivery Note Creation.
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ padding: "10px 12px", borderRadius: 12, border: `1px solid ${PGC.line}`, background: PGC.panel2 }}>
+                <div style={{ fontSize: 11, color: PGC.dim, textTransform: "uppercase", letterSpacing: "0.1em" }}>Simulation time</div>
+                <div style={{ fontWeight: 800, fontSize: 20 }}>{simClock}</div>
+              </div>
+              <button onClick={() => onHome?.()} style={pgBtnGhost()}>Home</button>
+            </div>
+          </header>
+
+          <main style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 360px", gap: 14, padding: 14 }}>
+            <section style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 16, overflow: "hidden", position: "relative" }}>
+              <div ref={mountRef} style={{ width: "100%", height: "72vh", minHeight: 520 }} />
+              <div style={{ position: "absolute", left: 12, bottom: 12, background: "rgba(11,17,24,0.84)", border: `1px solid ${PGC.line}`, color: PGC.dim, borderRadius: 10, padding: "8px 10px", fontSize: 12 }}>
+                Drag to rotate · Scroll to zoom
+              </div>
+              <div style={{ position: "absolute", left: 12, top: 12, maxWidth: 520, background: "rgba(11,17,24,0.88)", border: `1px solid ${PGC.line}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ color: scenario === "old" ? PGC.red : PGC.green, fontSize: 12, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>{scenarioData.summary.title}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>{scenarioData.summary.subtitle}</div>
+                <div style={{ color: PGC.dim, fontSize: 13, lineHeight: 1.45 }}>{activeEvent}</div>
+              </div>
+            </section>
+
+            <aside style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ border: `1px solid ${scenario === "old" ? PGC.red : PGC.green}`, background: PGC.panel2, borderRadius: 16, padding: 16 }}>
+                <div style={{ color: PGC.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 11, marginBottom: 8 }}>Scenario switch</div>
+                <div style={{ display: "grid", gap: 10 }}>
+                  <button onClick={() => { setScenario("old"); resetSim(); }} style={pgScenarioBtn(scenario === "old", PGC.red)}>Old world</button>
+                  <button onClick={() => { setScenario("smart"); resetSim(); }} style={pgScenarioBtn(scenario === "smart", PGC.green)}>Smart Delivery Note Creation Job</button>
+                </div>
+              </div>
+
+              <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 16, padding: 16 }}>
+                <div style={{ color: PGC.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 11, marginBottom: 10 }}>Controls</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+                  <button onClick={() => setPlaying((v) => !v)} style={pgBtnPrimary(playing ? PGC.orange : PGC.green)}>{playing ? "Pause" : "Start"}</button>
+                  <button onClick={resetSim} style={pgBtnGhost()}>Reset</button>
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, color: PGC.dim, fontSize: 14 }}>
+                  Speed
+                  <input type="range" min="0.6" max="2.0" step="0.1" value={speed} onChange={(e) => setSpeed(Number(e.target.value))} />
+                  <span style={{ color: PGC.text, minWidth: 34 }}>{speed.toFixed(1)}×</span>
+                </label>
+              </div>
+
+              <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 16, padding: 16 }}>
+                <div style={{ color: PGC.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 11, marginBottom: 10 }}>Business impact</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <PGMetric label="Delivery Notes" value={String(scenarioData.summary.deliveryNotes)} />
+                  <PGMetric label="Parcels" value={String(scenarioData.summary.parcels)} />
+                  <PGMetric label="Transport Cost" value={scenarioData.summary.transportCosts} />
+                  <PGMetric label="Packing Result" value={scenario === "old" ? "split" : "combined"} />
+                </div>
+                <div style={{ marginTop: 12, color: PGC.dim, lineHeight: 1.5, fontSize: 14 }}>{scenarioData.summary.outcome}</div>
+              </div>
+
+              <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel, borderRadius: 16, padding: 16, flex: 1 }}>
+                <div style={{ color: PGC.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontSize: 11, marginBottom: 10 }}>Scenario logic</div>
+                <ul style={{ margin: 0, paddingLeft: 18, color: PGC.dim, lineHeight: 1.6, fontSize: 14 }}>
+                  <li>Customer creates one order with two positions at 10:00.</li>
+                  <li>Position 1 is already on stock.</li>
+                  <li>Position 2 becomes available only after inbound put-away around 12:00.</li>
+                  {scenario === "old" ? (
+                    <>
+                      <li>The system creates the first delivery note immediately for the stock item.</li>
+                      <li>Two hours later a second delivery note is created for position 2.</li>
+                      <li>Both positions would fit into one parcel, but the old world sends two parcels.</li>
+                    </>
+                  ) : (
+                    <>
+                      <li>The Smart Delivery Note Creation Job waits until both positions are available.</li>
+                      <li>One combined delivery note is created for both order lines.</li>
+                      <li>Both items are packed together into one parcel.</li>
+                    </>
+                  )}
+                </ul>
+              </div>
+            </aside>
+          </main>
+
+          <footer style={{ borderTop: `1px solid ${PGC.line}`, background: PGC.panel, padding: "12px 14px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
+                {visibleEvents.map((ev, idx) => (
+                  <div key={`${ev.t}-${idx}`} style={{ flex: "0 0 auto", border: `1px solid ${ev.tone === "err" ? PGC.red : ev.tone === "ok" ? PGC.green : PGC.line}`, background: PGC.panel2, borderRadius: 999, padding: "8px 12px", color: ev.tone === "err" ? PGC.red : ev.tone === "ok" ? PGC.green : PGC.text, fontSize: 12, whiteSpace: "nowrap" }}>
+                    {ev.label}
+                  </div>
+                ))}
+              </div>
+              <div style={{ color: PGC.dim, fontSize: 12, whiteSpace: "nowrap" }}>
+                Topic: <span style={{ color: PGC.text }}>Same-Day & Same Shipping Point</span>
+              </div>
+            </div>
+          </footer>
+        </div>
+      )}
+
+      <style>{`
+        button, input { font: inherit; }
+        @media (max-width: 980px) {
+          main { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function PGMetric({ label, value }) {
+  return (
+    <div style={{ border: `1px solid ${PGC.line}`, background: PGC.panel2, borderRadius: 12, padding: 12 }}>
+      <div style={{ color: PGC.dim, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>{label}</div>
+      <div style={{ fontWeight: 800, fontSize: 22 }}>{value}</div>
+    </div>
+  );
+}
+
+function pgBtnPrimary(accent) {
+  return {
+    border: `1px solid ${accent}`,
+    background: accent === PGC.green ? "rgba(61,220,132,0.12)" : accent === PGC.red ? "rgba(255,107,107,0.12)" : "rgba(255,159,67,0.12)",
+    color: accent,
+    borderRadius: 12,
+    padding: "11px 14px",
+    fontWeight: 800,
+    cursor: "pointer",
+  };
+}
+function pgBtnGhost() {
+  return {
+    border: `1px solid ${PGC.line}`,
+    background: PGC.panel2,
+    color: PGC.text,
+    borderRadius: 12,
+    padding: "11px 14px",
+    fontWeight: 700,
+    cursor: "pointer",
+  };
+}
+function pgScenarioBtn(active, accent) {
+  return {
+    textAlign: "left",
+    border: `1px solid ${active ? accent : PGC.line}`,
+    background: active ? "rgba(255,255,255,0.04)" : PGC.panel,
+    color: active ? accent : PGC.text,
+    borderRadius: 12,
+    padding: "12px 14px",
+    fontWeight: 800,
+    cursor: "pointer",
+  };
+}
+
 export default function SupplyChainSim() {
   const mountRef = useRef(null);
   const world = useRef({});
@@ -935,11 +1641,12 @@ export default function SupplyChainSim() {
   const guidedTimersRef = useRef([]);
   const [hud, setHud] = useState({ t: 0, clock: "09:00", docked: 0, unloaded: 0, stored: 0, picked: 0, packed: 0, labelled: 0, inFix: 0, shipped: 0, ots: "Waiting for loading", msg: "Choose Start in Inbound or Start with Packing", msgKind: "info", done: false });
   const [showLanding, setShowLanding] = useState(true);
+  const [processGapOpen, setProcessGapOpen] = useState(false);
 
   useEffect(() => {
     // The 3D mount is intentionally absent while the landing page is visible.
     // Initialize Three.js only after an experience has been opened.
-    if (showLanding) {
+    if (showLanding || processGapOpen) {
       world.current = {};
       return undefined;
     }
@@ -2561,7 +3268,7 @@ export default function SupplyChainSim() {
       }
       world.current = {};
     };
-  }, [scenario, showLanding]);
+  }, [scenario, showLanding, processGapOpen]);
 
   useEffect(() => () => {
     guidedTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -2814,6 +3521,12 @@ export default function SupplyChainSim() {
     showPackingOnly();
   };
 
+  const openProcessGap = () => {
+    doPause();
+    setProcessGapOpen(true);
+    setShowLanding(false);
+  };
+
   if (showLanding) {
     const landingCard = (accent) => ({
       background: "rgba(20,27,37,0.96)", border: `1px solid ${accent}`, borderRadius: 16,
@@ -2828,7 +3541,7 @@ export default function SupplyChainSim() {
             <h1 style={{ margin: 0, fontSize: "clamp(30px, 5vw, 54px)", lineHeight: 1.05 }}>Understand today’s label process and compare future concepts</h1>
             <p style={{ color: C.dim, fontSize: 16, lineHeight: 1.65, maxWidth: 780, margin: "16px 0 0" }}>Choose a focused view of the current process or compare three alternative concepts in the same interactive 3D packing world.</p>
           </div>
-          <div className="landing-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 }}>
+          <div className="landing-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16 }}>
             <button onClick={() => openExperience("current")} style={landingCard(C.blue)}>
               <div style={{ color: C.blue, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 800, letterSpacing: 1.2 }}>01 · CURRENT STATE</div>
               <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>View Current Label Process</h2>
@@ -2841,6 +3554,13 @@ export default function SupplyChainSim() {
               <p style={{ color: C.dim, lineHeight: 1.55, margin: 0 }}>Explore staging, interim-label loops and predictive ORTEC proposals as alternative future-state concepts.</p>
               <div style={{ marginTop: "auto", paddingTop: 18, color: C.green, fontWeight: 800 }}>Explore scenarios →</div>
             </button>
+
+            <button onClick={openProcessGap} style={landingCard(C.yellow)}>
+              <div style={{ color: C.yellow, fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 800, letterSpacing: 1.2 }}>03 · PROCESS GAP SIMULATION</div>
+              <h2 style={{ margin: "14px 0 8px", fontSize: 23 }}>Same-Day & Same Shipping Point</h2>
+              <p style={{ color: C.dim, lineHeight: 1.55, margin: 0 }}>Compare immediate delivery-note creation with the Smart Delivery Note Creation Job and visualize the avoided split shipment.</p>
+              <div style={{ marginTop: "auto", paddingTop: 18, color: C.yellow, fontWeight: 800 }}>Open process simulation →</div>
+            </button>
           </div>
           <div style={{ marginTop: 18, color: C.dim, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>Start with the focused packing view. Expand to the end-to-end supply chain only when the broader process context is needed.</div>
         </div>
@@ -2849,6 +3569,10 @@ export default function SupplyChainSim() {
     );
   }
 
+
+  if (processGapOpen) {
+    return <ProcessGapSimulation onHome={() => { setProcessGapOpen(false); setShowLanding(true); }} />;
+  }
 
   return (
     <div style={{ position: "absolute", inset: 0, background: C.bg, color: C.text, fontFamily: "'Space Grotesk', system-ui, sans-serif", display: "flex", flexDirection: "column", overflow: "hidden" }}>
