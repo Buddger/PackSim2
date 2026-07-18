@@ -1990,6 +1990,7 @@ function Simulation({ onBack }) {
   const [speed, setSpeed] = useState(4);
   const [uiT, setUiT] = useState(0); // for HUD refresh (updated ~10x/s)
   const [panelTab, setPanelTab] = useState("compare"); // mobile: compare | pilot
+  const [viewMode, setViewMode] = useState("process"); // process | business
 
   stateRef.current.scenario = scenario;
   stateRef.current.speed = speed;
@@ -2326,18 +2327,20 @@ function Simulation({ onBack }) {
 
   return (
     <div className="pgs-root">
-      <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.5fr) repeat(3,minmax(120px,.55fr))",gap:10,padding:"10px 14px",background:"#0e151f",borderBottom:"1px solid #253244",alignItems:"stretch"}}>
-        <div style={{padding:"10px 12px",border:"1px solid #2a394d",borderRadius:12,background:"#141e29"}}>
+      <div style={{padding:"10px 14px",background:"#0e151f",borderBottom:"1px solid #253244"}}>
+        <div style={{padding:"11px 13px",border:"1px solid #2a394d",borderRadius:12,background:"#141e29",marginBottom:9}}>
           <div style={{fontSize:10,letterSpacing:1.2,fontWeight:800,color:mgmtScenario.tone}}>{mgmtScenario.label}</div>
-          <div style={{fontSize:16,fontWeight:800,marginTop:4}}>Smart Delivery Note Creation</div>
-          <div style={{fontSize:12,color:"#9aa7b8",marginTop:3}}>Wait for same-day, same-shipping-point positions — but never beyond the shipping cutoff.</div>
+          <div style={{fontSize:18,fontWeight:850,marginTop:4}}>Should we create the delivery note immediately, or wait for same-day consolidation?</div>
+          <div style={{fontSize:12,color:"#9aa7b8",marginTop:4}}>Smart Delivery Note Creation waits for positions from the same order and shipping point — but never beyond the shipping cutoff.</div>
         </div>
-        {[["Delivery notes", scenario===2?"1":"2"],["Parcels",scenario===2?"1":"2"],["Transport cost",scenario===2?"1×":"2×"]].map(([l,v])=>(
-          <div key={l} style={{padding:"10px 12px",border:`1px solid ${mgmtScenario.tone}`,borderRadius:12,background:"#141e29",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-            <div style={{fontSize:10,color:"#9aa7b8",textTransform:"uppercase",letterSpacing:.8}}>{l}</div>
-            <div style={{fontSize:24,fontWeight:900,color:mgmtScenario.tone}}>{v}</div>
-          </div>
-        ))}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(110px,1fr))",gap:8}}>
+          {[["Delivery notes", scenario===2?"1":"2"],["Parcels",scenario===2?"1":"2"],["Transport cost",scenario===2?"1×":"2×"],["Customer touchpoints",scenario===2?"1":"2"]].map(([l,v])=>(
+            <div key={l} style={{padding:"9px 11px",border:`1px solid ${mgmtScenario.tone}`,borderRadius:11,background:"#141e29"}}>
+              <div style={{fontSize:9,color:"#9aa7b8",textTransform:"uppercase",letterSpacing:.8}}>{l}</div>
+              <div style={{fontSize:22,fontWeight:900,color:mgmtScenario.tone}}>{v}</div>
+            </div>
+          ))}
+        </div>
       </div>
       {/* top order panel */}
       <div className="pgs-top">
@@ -2424,8 +2427,35 @@ function Simulation({ onBack }) {
         </div>
       </div>
 
-      {/* 3D viewport (full width) */}
+      <div style={{padding:"0 14px 10px",background:"#0e151f"}}>
+        <div style={{display:"grid",gridTemplateColumns:"1.2fr repeat(2,minmax(150px,1fr))",border:"1px solid #29384a",borderRadius:12,overflow:"hidden",background:"#121a24"}}>
+          <div style={{padding:"9px 11px",fontSize:11,fontWeight:800,color:"#9aa7b8"}}>PER ORDER</div>
+          <div style={{padding:"9px 11px",fontSize:11,fontWeight:800,color:"#ff7b7b",borderLeft:"1px solid #29384a"}}>CURRENT PROCESS</div>
+          <div style={{padding:"9px 11px",fontSize:11,fontWeight:800,color:"#63dc98",borderLeft:"1px solid #29384a"}}>SMART JOB SUCCESS</div>
+          {[
+            ["Delivery notes","2","1"],
+            ["Parcels","2","1"],
+            ["Transport movements","2","1"],
+            ["Parcel & filling material","2 sets","1 set"],
+            ["Pick & pack effort","2 cycles","1 cycle"],
+            ["Customer touchpoints","2","1"],
+          ].map((r)=><React.Fragment key={r[0]}>
+            <div style={{padding:"7px 11px",fontSize:11,borderTop:"1px solid #202d3c"}}>{r[0]}</div>
+            <div style={{padding:"7px 11px",fontSize:11,borderTop:"1px solid #202d3c",borderLeft:"1px solid #202d3c",color:"#ff9a9a"}}>{r[1]}</div>
+            <div style={{padding:"7px 11px",fontSize:11,borderTop:"1px solid #202d3c",borderLeft:"1px solid #202d3c",color:"#7be3a8"}}>{r[2]}</div>
+          </React.Fragment>)}
+        </div>
+      </div>
+
+      {/* process / business case mode */}
+      <div style={{display:"flex",gap:8,padding:"0 14px 10px",background:"#0e151f"}}>
+        <button className={viewMode === "process" ? "on-auto" : ""} onClick={() => setViewMode("process")}>Process View</button>
+        <button className={viewMode === "business" ? "on-auto" : ""} onClick={() => setViewMode("business")}>Business Case View</button>
+      </div>
+
+      {/* 3D viewport / business case */}
       <div className="pgs-mid">
+        {viewMode === "process" ? (
         <div className="pgs-stage" ref={mountRef}>
           {playing && ff.label && (
             <div className="pgs-ff">
@@ -2437,7 +2467,7 @@ function Simulation({ onBack }) {
             <div className={`pgs-conclusion ${scenario === 1 ? "bad" : scenario === 2 ? "good" : "warn"}`}>
               {scenario === 1 && (
                 <>
-                  <b>Split shipment — avoidable.</b>
+                  <b>Key takeaway: avoidable split shipment.</b>
                   <span>
                     Both items belonged to the same customer order and would have fitted into one
                     parcel. Immediate delivery note creation caused an unnecessary split shipment,
@@ -2448,7 +2478,7 @@ function Simulation({ onBack }) {
               )}
               {scenario === 2 && (
                 <>
-                  <b>One order · one delivery · one parcel.</b>
+                  <b>Key takeaway: one order · one delivery · one parcel.</b>
                   <span>
                     The Smart Delivery Note Creation Job waited until both positions were available and
                     combined them into one delivery note and one parcel — saving ⌀ €15 in transport
@@ -2463,7 +2493,7 @@ function Simulation({ onBack }) {
               )}
               {scenario === 3 && (
                 <>
-                  <b>Cutoff missed — fallback split shipment.</b>
+                  <b>Correct governance behavior — service commitment protected.</b>
                   <span>
                     Item B's put-away only completed at 15:00, after the 14:00 shipping cutoff. The
                     Smart Delivery Note Creation Job released Item A separately right at the cutoff
@@ -2471,15 +2501,35 @@ function Simulation({ onBack }) {
                     trucks (⌀ €15 extra transport cost, two customer touchpoints).
                   </span>
                   <span className="pgs-note-sub">
-                    This is expected behavior, not a delay: the job never holds a shipment past the
-                    cutoff, so Item A's delivery time and OTIF are unaffected — only the cost and
-                    CX saving did not materialize this time.
+                    The Smart Job consolidates only while service commitments remain protected. At 14:00 it releases available positions, so Item A's delivery time and OTIF remain unaffected; only the cost and CX saving do not materialize.
                   </span>
                 </>
               )}
             </div>
           )}
         </div>
+        ) : (
+          <div style={{width:"100%",padding:16,display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12,background:"#0f1620"}}>
+            <div style={{border:"1px solid #2a394d",borderRadius:14,padding:15,background:"#141e29"}}>
+              <div style={{fontSize:11,fontWeight:850,color:"#4da3ff",letterSpacing:1}}>SYSTEM BENEFIT</div>
+              <h3 style={{margin:"7px 0 8px",fontSize:18}}>Prevent premature delivery-note creation</h3>
+              <p style={{margin:0,color:"#9aa7b8",fontSize:13,lineHeight:1.55}}>The Smart Job identifies positions from the same customer order and shipping point, holds the first delivery note within the allowed time window, and creates one combined delivery note when all eligible positions are available.</p>
+              <div style={{marginTop:12,padding:11,borderRadius:10,border:"1px solid #37c978",color:"#7be3a8"}}><b>Direct result:</b> −1 parcel, −1 transport movement, −1 set of parcel and filling material, and −1 pick-and-pack cycle per consolidated order.</div>
+            </div>
+            <div style={{border:"1px solid #2a394d",borderRadius:14,padding:15,background:"#141e29"}}>
+              <div style={{fontSize:11,fontWeight:850,color:"#ff9d42",letterSpacing:1}}>OPERATIONAL DEPENDENCY</div>
+              <h3 style={{margin:"7px 0 8px",fontSize:18}}>Put-away must finish before cutoff</h3>
+              <p style={{margin:0,color:"#9aa7b8",fontSize:13,lineHeight:1.55}}>The IT job cannot consolidate a position that is not physically available. Additional upside therefore depends on inbound and put-away performance before the 14:00 shipping cutoff.</p>
+              <div style={{marginTop:12,padding:11,borderRadius:10,border:"1px solid #ff9d42",color:"#ffc27d"}}><b>Governance:</b> the job releases available positions at cutoff. This protects OTIF and prevents the consolidation logic from delaying customer commitments.</div>
+            </div>
+            <div style={{gridColumn:"1 / -1",display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:10}}>
+              {[["BASE CASE","€144k","per warehouse / year"],["OPERATIONAL UPSIDE","+€108k","per warehouse / year"],["REGIONAL RANGE","€0.72–1.26m","per year"]].map(([a,b,c])=><div key={a} style={{border:"1px solid #2a394d",borderRadius:12,padding:14,background:"#121a24"}}><div style={{fontSize:10,color:"#9aa7b8",letterSpacing:1}}>{a}</div><div style={{fontSize:25,fontWeight:900,marginTop:4}}>{b}</div><div style={{fontSize:11,color:"#9aa7b8",marginTop:3}}>{c}</div></div>)}
+            </div>
+            <div style={{gridColumn:"1 / -1",border:"1px solid #2a394d",borderRadius:12,padding:13,background:"#121a24",fontSize:12,color:"#9aa7b8"}}>
+              <b style={{color:"#d7dee8"}}>Assumptions:</b> 40 consolidated orders/day, 30 additional late put-away cases/day, €15 avoided transport cost per consolidated order, 240 working days, approximately 5 warehouses in the region.
+            </div>
+          </div>
+        )}
       </div>
 
       {/* bottom: controls + timeline + comparison */}
@@ -2516,10 +2566,11 @@ function Simulation({ onBack }) {
         </div>
 
         <div className="pgs-costbar" style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
-          <span className="pgs-costbar-good" style={{display:"block"}}><small>REALIZED TODAY</small><br/><b>€144k / warehouse / year</b></span>
-          <span className="pgs-costbar-bad" style={{display:"block"}}><small>ADDITIONAL PUT-AWAY POTENTIAL</small><br/><b>€108k / warehouse / year</b></span>
-          <span className="pgs-costbar-net" style={{display:"block"}}><small>REGIONAL UPSIDE</small><br/><b>up to €1.26m / year</b></span>
+          <span className="pgs-costbar-good" style={{display:"block"}}><small>BASE CASE</small><br/><b>€144k / warehouse / year</b></span>
+          <span className="pgs-costbar-bad" style={{display:"block"}}><small>OPERATIONAL UPSIDE</small><br/><b>+€108k / warehouse / year</b></span>
+          <span className="pgs-costbar-net" style={{display:"block"}}><small>REGIONAL RANGE</small><br/><b>€0.72–1.26m / year</b></span>
         </div>
+        <div style={{padding:"0 2px 10px",fontSize:11,color:"#7f8ea3"}}>Assumptions: 40 consolidated orders/day · 30 late put-away cases/day · €15 avoided transport cost · 240 working days · approximately 5 warehouses.</div>
 
         <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,padding:"0 2px 10px"}}>
           {storySteps.map(([time,label],i)=>(
@@ -2553,6 +2604,8 @@ function Simulation({ onBack }) {
                   ["Parcels", "2", "1", "2"],
                   ["Transport cost", "2×", "1×", "2×"],
                   ["Customer touchpoints", "2", "1", "2"],
+                  ["Parcel & filling material", "2 sets", "1 set", "2 sets"],
+                  ["Pick & pack effort", "2 cycles", "1 cycle", "2 cycles"],
                   ["Management interpretation", "Avoidable split", "Successful consolidation", "Correct cutoff fallback"],
                 ].map((r) => (
                   <tr key={r[0]}>
@@ -2571,8 +2624,7 @@ function Simulation({ onBack }) {
               </div>
             ) : (
               <div className="pgs-benefit">
-                −1 parcel and −1 transport movement per affected customer order — ⌀ €15 saved per
-                avoided split shipment.
+                −1 parcel, −1 transport movement, −1 set of parcel and filling material, and −1 pick-and-pack cycle per affected customer order — ⌀ €15 transport cost saved per avoided split shipment.
               </div>
             )}
             <div className="pgs-footnote"><b>Guardrail:</b> the job never holds an order beyond the shipping cutoff, protecting OTIF.</div>
