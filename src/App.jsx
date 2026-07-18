@@ -1889,9 +1889,9 @@ function buildScene(scene) {
   refs.truckOut1 = truckOut1; refs.truckOut2 = truckOut2;
   // small "TRUCK 1 / TRUCK 2" labels above each
   const t1label = makeTextPlane("TRUCK 1", 2.6, 0.7, { color: "#bcd6ff", bg: "rgba(12,22,38,0.8)", size: 72 });
-  t1label.position.set(43, 4.4, -3); refs.truckOut1label = t1label; scene.add(t1label);
+  t1label.position.set(43, 4.4, -3); refs.truckOut1label = t1label; t1label.visible = false; scene.add(t1label);
   const t2label = makeTextPlane("TRUCK 2", 2.6, 0.7, { color: "#ffd0a0", bg: "rgba(38,24,10,0.8)", size: 72 });
-  t2label.position.set(43, 4.4, 3); refs.truckOut2label = t2label; scene.add(t2label);
+  t2label.position.set(43, 4.4, 3); refs.truckOut2label = t2label; t2label.visible = false; scene.add(t2label);
 
   /* forklift builder (body color configurable) */
   function buildForklift(bodyColor) {
@@ -1919,6 +1919,7 @@ function buildScene(scene) {
   /* ambient forklift — quietly patrols the inbound/storage aisle so the hall
      never looks frozen during long waiting phases. Never enters the rack corpus. */
   const fk2 = buildForklift(0x8a9bb0);
+  fk2.visible = false;
   fk2.position.set(-35, 0, 8);
   refs.forklift2 = fk2;
 
@@ -2221,7 +2222,7 @@ function Simulation({ onBack }) {
       }
 
       /* "waiting in inbound" tag while Item B has not started put-away yet */
-      const waitingB = pb && pb[0] === INB_B[0] && pb[2] === INB_B[2];
+      const waitingB = false; // management view: status is shown in the 2D order panel, not as a floating 3D tag
       refs.waitingTag.visible = !!waitingB;
       if (waitingB) {
         refs.waitingTag.position.set(INB_B[0], INB_B[1] + 1.15, INB_B[2]);
@@ -2244,11 +2245,11 @@ function Simulation({ onBack }) {
          until Item B has actually been put away into it. */
       const aOnShelf = pa && Math.abs(pa[0] - RACK_A[0]) < 0.1 && Math.abs(pa[2] - RACK_A[2]) < 0.1;
       const bInSlot = pb && Math.abs(pb[0] - RACK_B[0]) < 0.1 && Math.abs(pb[2] - RACK_B[2]) < 0.1;
-      const showA = aOnShelf && t < 46;
+      const showA = aOnShelf && t < 10;
       const showB = !bInSlot && (pb ? pb[0] === INB_B[0] : true); // empty until B arrives
       refs.slotA.visible = showA;
       refs.slotAlabel.visible = showA;
-      refs.slotB.visible = showB && t < (scn === 3 ? 300 : 122);
+      refs.slotB.visible = showB && t < 10;
       refs.slotBlabel.visible = refs.slotB.visible;
       // billboard labels toward the camera
       if (refs.slotAlabel.visible) refs.slotAlabel.lookAt(camera.position);
@@ -2308,8 +2309,36 @@ function Simulation({ onBack }) {
   const dn2Visible = (scenario === 1 && t >= 121) || (scenario === 3 && t >= 301);
   const dnCombVisible = scenario === 2 && t >= 121;
 
+  const mgmtScenario = scenario === 1
+    ? { label: "CURRENT PROCESS", issue: "Immediate DN creation", result: "2 DNs · 2 parcels · 2× cost", tone: "#ff5c5c" }
+    : scenario === 2
+      ? { label: "SMART JOB SUCCESS", issue: "Hold until both positions are available", result: "1 DN · 1 parcel · 1× cost", tone: "#37c978" }
+      : { label: "SMART JOB BOUNDARY", issue: "Cutoff reached before Pos 20 is available", result: "Fallback split protects OTIF", tone: "#ff9d42" };
+  const decisionChecks = [
+    ["Same customer order", true],
+    ["Same shipping point", true],
+    ["Second position expected today", true],
+    ["Available before cutoff", scenario !== 3 || t < CUTOFF_T],
+  ];
+  const storySteps = scenario === 3
+    ? [["10:00", "Order created"], ["10:01", "DN held"], ["14:00", "Cutoff reached"], ["15:21", "Fallback split shipped"]]
+    : [["10:00", "Order created"], ["10:01", scenario === 1 ? "Partial DN created" : "DN held"], ["12:00", "Item B available"], ["12:30", scenario === 1 ? "Second parcel shipped" : "Combined parcel shipped"]];
+
   return (
     <div className="pgs-root">
+      <div style={{display:"grid",gridTemplateColumns:"minmax(0,1.5fr) repeat(3,minmax(120px,.55fr))",gap:10,padding:"10px 14px",background:"#0e151f",borderBottom:"1px solid #253244",alignItems:"stretch"}}>
+        <div style={{padding:"10px 12px",border:"1px solid #2a394d",borderRadius:12,background:"#141e29"}}>
+          <div style={{fontSize:10,letterSpacing:1.2,fontWeight:800,color:mgmtScenario.tone}}>{mgmtScenario.label}</div>
+          <div style={{fontSize:16,fontWeight:800,marginTop:4}}>Smart Delivery Note Creation</div>
+          <div style={{fontSize:12,color:"#9aa7b8",marginTop:3}}>Wait for same-day, same-shipping-point positions — but never beyond the shipping cutoff.</div>
+        </div>
+        {[["Delivery notes", scenario===2?"1":"2"],["Parcels",scenario===2?"1":"2"],["Transport cost",scenario===2?"1×":"2×"]].map(([l,v])=>(
+          <div key={l} style={{padding:"10px 12px",border:`1px solid ${mgmtScenario.tone}`,borderRadius:12,background:"#141e29",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+            <div style={{fontSize:10,color:"#9aa7b8",textTransform:"uppercase",letterSpacing:.8}}>{l}</div>
+            <div style={{fontSize:24,fontWeight:900,color:mgmtScenario.tone}}>{v}</div>
+          </div>
+        ))}
+      </div>
       {/* top order panel */}
       <div className="pgs-top">
         <div className="pgs-order">
@@ -2381,6 +2410,18 @@ function Simulation({ onBack }) {
             </div>
           )}
         </div>
+        <div style={{minWidth:260,border:"1px solid #2a394d",borderRadius:12,padding:12,background:"#121b25"}}>
+          <div style={{fontSize:10,letterSpacing:1,fontWeight:800,color:"#9aa7b8",marginBottom:8}}>DECISION LOGIC</div>
+          {decisionChecks.map(([label,ok])=>(
+            <div key={label} style={{display:"flex",justifyContent:"space-between",gap:10,padding:"5px 0",borderBottom:"1px solid #202d3c",fontSize:12}}>
+              <span>{label}</span><b style={{color:ok?"#37c978":"#ff5c5c"}}>{ok?"YES":"NO"}</b>
+            </div>
+          ))}
+          <div style={{marginTop:10,padding:"9px 10px",borderRadius:9,background:"#0f1720",border:`1px solid ${mgmtScenario.tone}`}}>
+            <div style={{fontSize:10,color:"#9aa7b8"}}>SYSTEM DECISION</div>
+            <div style={{fontWeight:800,color:mgmtScenario.tone,marginTop:3}}>{scenario===1?"CREATE DN NOW":scenario===2?"HOLD AND CONSOLIDATE":"RELEASE AT CUTOFF"}</div>
+          </div>
+        </div>
       </div>
 
       {/* 3D viewport (full width) */}
@@ -2447,13 +2488,13 @@ function Simulation({ onBack }) {
           <button className="pgs-back" onClick={onBack}>‹ Home</button>
           <div className="pgs-scn">
             <button className={scenario === 1 ? "on s1" : ""} onClick={() => switchScenario(1)}>
-              Scenario 1 · Old World
+              A · Current Process
             </button>
             <button className={scenario === 2 ? "on s2" : ""} onClick={() => switchScenario(2)}>
-              Scenario 2 · Smart Job (in time)
+              B · Smart Job Success
             </button>
             <button className={scenario === 3 ? "on s3" : ""} onClick={() => switchScenario(3)}>
-              Scenario 3 · Smart Job (cutoff missed)
+              C · Smart Job Boundary
             </button>
           </div>
           <button className="pgs-play" onClick={() => setPlaying((p) => (t >= endT ? (restart(), true) : !p))}>
@@ -2474,12 +2515,19 @@ function Simulation({ onBack }) {
           </div>
         </div>
 
-        <div className="pgs-costbar">
-          <span className="pgs-costbar-lead">Per warehouse (pilot):</span>
-          <span className="pgs-costbar-good">+€600/day realised</span>
-          <span className="pgs-costbar-bad">€450/day potential</span>
-          <span className="pgs-costbar-net">≈ €144k/yr · LEC ×5 ≈ €720k</span>
-          <button className="pgs-costbar-more" onClick={() => setPanelTab("pilot")}>business case ›</button>
+        <div className="pgs-costbar" style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8}}>
+          <span className="pgs-costbar-good" style={{display:"block"}}><small>REALIZED TODAY</small><br/><b>€144k / warehouse / year</b></span>
+          <span className="pgs-costbar-bad" style={{display:"block"}}><small>ADDITIONAL PUT-AWAY POTENTIAL</small><br/><b>€108k / warehouse / year</b></span>
+          <span className="pgs-costbar-net" style={{display:"block"}}><small>REGIONAL UPSIDE</small><br/><b>up to €1.26m / year</b></span>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,padding:"0 2px 10px"}}>
+          {storySteps.map(([time,label],i)=>(
+            <div key={time} style={{border:"1px solid #29384a",borderRadius:10,padding:"9px 10px",background:"#121a24"}}>
+              <div style={{fontSize:11,color:i===storySteps.length-1?mgmtScenario.tone:"#4da3ff",fontWeight:800}}>{time}</div>
+              <div style={{fontSize:12,marginTop:3}}>{label}</div>
+            </div>
+          ))}
         </div>
 
         <div className="pgs-tabbar">
@@ -2494,21 +2542,18 @@ function Simulation({ onBack }) {
               <thead>
                 <tr>
                   <th>KPI</th>
-                  <th className={scenario === 1 ? "hl1" : ""}>Old World</th>
-                  <th className={scenario === 2 ? "hl2" : ""}>Smart Job (in time)</th>
-                  <th className={scenario === 3 ? "hl3" : ""}>Smart Job (cutoff missed)</th>
+                  <th className={scenario === 1 ? "hl1" : ""}>Current Process</th>
+                  <th className={scenario === 2 ? "hl2" : ""}>Smart Job Success</th>
+                  <th className={scenario === 3 ? "hl3" : ""}>Smart Job Boundary</th>
                 </tr>
               </thead>
               <tbody>
                 {[
-                  ["Customer orders", "1", "1", "1"],
-                  ["Order positions", "2", "2", "2"],
                   ["Delivery notes", "2", "1", "2"],
-                  ["Deliveries", "2", "1", "2"],
                   ["Parcels", "2", "1", "2"],
-                  ["Outbound trucks", "2", "1", "2"],
-                  ["Transport cost (⌀ €15 / shipment)", "2× ≈ €30", "1× ≈ €15", "2× ≈ €30"],
-                  ["CX delivery touchpoints", "2", "1", "2"],
+                  ["Transport cost", "2×", "1×", "2×"],
+                  ["Customer touchpoints", "2", "1", "2"],
+                  ["Management interpretation", "Avoidable split", "Successful consolidation", "Correct cutoff fallback"],
                 ].map((r) => (
                   <tr key={r[0]}>
                     <td>{r[0]}</td>
@@ -2530,20 +2575,12 @@ function Simulation({ onBack }) {
                 avoided split shipment.
               </div>
             )}
-            <div className="pgs-footnote">
-              The Smart Delivery Note Creation Job only waits until the shipping cutoff time. It
-              never delays a shipment beyond that — so it has no influence on OTIF or on the
-              delivery lead time of individual articles.
-            </div>
-            <div className="pgs-footnote">
-              CX impact: a split order reaches the customer as two separate deliveries — two
-              delivery touchpoints instead of one. Fewer touchpoints improve the customer
-              experience (CX Score), which measures how the customer perceives the delivery.
-            </div>
+            <div className="pgs-footnote"><b>Guardrail:</b> the job never holds an order beyond the shipping cutoff, protecting OTIF.</div>
+            <div className="pgs-footnote"><b>CX impact:</b> one consolidated delivery reduces customer touchpoints from 2 to 1.</div>
           </div>
 
           <div className={`pgs-pilot pgs-tabpanel ${panelTab === "pilot" ? "active" : ""}`}>
-            <div className="pgs-panel-title">Business case — per warehouse (pilot) · region ×5</div>
+            <div className="pgs-panel-title">Management business case</div>
             <div className={`pgs-pilot-row ${scenario === 2 ? "hl2" : ""}`}>
               <span className="pgs-pilot-label">
                 <b>Consolidated before cutoff</b>
