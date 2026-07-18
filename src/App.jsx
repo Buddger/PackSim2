@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useState, useCallback } from "react";
 import * as THREE from "three";
 
 /* ============================================================
@@ -1154,409 +1154,1675 @@ function pgBuildScenarioData(mode) {
   };
 }
 
-function ProcessGapSimulation({ onHome }) {
-  const mountRef = useRef(null);
-  const runtime = useRef({ t: 0, playing: false, speed: 1, mode: "old" });
-  const [mode, setMode] = useState("old");
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1);
-  const [hud, setHud] = useState({
-    clock: "10:00",
-    message: "Customer order created with two positions",
-    itemA: "Available in storage",
-    itemB: "Waiting in inbound",
-    dn: "Not created",
-    parcels: 0,
-    cost: "—",
-    phase: "Order created",
+
+/* ============================================================
+   Embedded functioning Process Gap scenes from ProcessGapSim.jsx
+   Isolated to avoid collisions with the existing packing simulation.
+   ============================================================ */
+const EmbeddedProcessGap = (() => {
+
+/* ============================================================
+   PROCESS GAP SIMULATION
+   "Same-Day & Same Shipping Point" — Smart Delivery Note Creation
+   Standalone app. No packing-label scenarios (S1–S6) included.
+   ============================================================ */
+
+/* ---------- time helpers (simulation minutes after 10:00) ---------- */
+const START_MIN = 10 * 60; // 10:00
+const fmtClock = (t) => {
+  const m = Math.max(0, Math.floor(START_MIN + t));
+  const h = Math.floor(m / 60);
+  const mm = String(m % 60).padStart(2, "0");
+  return `${String(h).padStart(2, "0")}:${mm}`;
+};
+
+/* piecewise linear path: waypoints = [{t, p:[x,y,z]}...] */
+function pathPos(wps, t) {
+  if (t <= wps[0].t) return wps[0].p;
+  const last = wps[wps.length - 1];
+  if (t >= last.t) return last.p;
+  for (let i = 0; i < wps.length - 1; i++) {
+    const a = wps[i], b = wps[i + 1];
+    if (t >= a.t && t <= b.t) {
+      const f = b.t === a.t ? 1 : (t - a.t) / (b.t - a.t);
+      return [
+        a.p[0] + (b.p[0] - a.p[0]) * f,
+        a.p[1] + (b.p[1] - a.p[1]) * f,
+        a.p[2] + (b.p[2] - a.p[2]) * f,
+      ];
+    }
+  }
+  return last.p;
+}
+
+/* ---------- scenario timelines ---------- */
+const CUTOFF_T = 240; // 14:00 shipping cutoff (minutes after 10:00)
+function getEndT(scn) {
+  return scn === 3 ? 322 : 158;
+}
+
+/* time-scaling per scenario/time:
+   - mult > 1  → fast-forward through "dead" waiting phases (nothing moves)
+   - mult < 1  → slow-motion so the human picking run is easy to follow
+   Also returns an optional badge label for fast-forward phases. */
+function fastForward(scn, t) {
+  // --- intro: hold slowly on the rack so the starting situation is readable ---
+  if (t < 8.5) return { mult: 0.35, label: null };
+
+  // --- slow-motion: human picker walking the roll cart to the pack station ---
+  const inPick =
+    (scn === 1 && ((t >= 11 && t < 21) || (t >= 122 && t < 132))) ||
+    (scn === 2 && t >= 122 && t < 132) ||
+    (scn === 3 && ((t >= 241 && t < 251) || (t >= 301 && t < 311)));
+  if (inPick) return { mult: 0.5, label: null };
+
+  // --- fast-forward: long waiting windows ---
+  if (scn === 1) {
+    // parcel 1 shipped (~10:40) → Item B put-away begins (~11:35). Nothing moves.
+    if (t > 40 && t < 92) return { mult: 16, label: "Fast-forward · waiting for Item B put-away" };
+  }
+  if (scn === 2) {
+    // held/reserved from ~10:02 until Item B put-away begins at t=95
+    if (t > 7 && t < 92) return { mult: 18, label: "Fast-forward · waiting for Item B put-away" };
+  }
+  if (scn === 3) {
+    // reserved, waiting for cutoff (10:02 → ~13:55)
+    if (t > 7 && t < CUTOFF_T - 8) return { mult: 22, label: "Fast-forward · holding until 14:00 cutoff" };
+    // parcel 1 shipped, waiting for the delayed put-away (~14:25 → ~14:57)
+    if (t > 264 && t < 272) return { mult: 16, label: "Fast-forward · waiting for delayed put-away (15:00)" };
+  }
+  return { mult: 1, label: null };
+}
+
+const S1_EVENTS = [
+  { t: 0, label: "10:00 – Order 4711 created · Item A on stock, Item B still in inbound" },
+  { t: 1, label: "10:01 – Delivery Note 1 created immediately for Item A (on stock)" },
+  { t: 10, label: "10:10 – Item A picked from storage" },
+  { t: 20, label: "10:20 – Parcel 1 packed (Item A only)" },
+  { t: 30, label: "10:30 – Parcel 1 shipped — before Item B is even available" },
+  { t: 120, label: "12:00 – Item B put-away completed, available in storage" },
+  { t: 121, label: "12:01 – Delivery Note 2 created for Item B (Pos 20)" },
+  { t: 130, label: "12:10 – Item B picked from storage" },
+  { t: 140, label: "12:20 – Parcel 2 packed (Item B only)" },
+  { t: 150, label: "12:30 – Parcel 2 shipped — split shipment complete" },
+];
+
+const S2_EVENTS = [
+  { t: 0, label: "10:00 – Customer order 4711 created (Pos 10 + Pos 20)" },
+  { t: 1, label: "10:01 – Delivery note creation held by Smart Job" },
+  { t: 2, label: "10:01–12:00 – Waiting for Item B put-away (Item A stays reserved)" },
+  { t: 120, label: "12:00 – Item B put-away completed, available in storage" },
+  { t: 121, label: "12:01 – Combined delivery note created (Pos 10 + Pos 20)" },
+  { t: 130, label: "12:10 – Both items picked from storage" },
+  { t: 140, label: "12:20 – Both items packed into one parcel" },
+  { t: 150, label: "12:30 – Combined parcel shipped" },
+];
+
+const S3_EVENTS = [
+  { t: 0, label: "10:00 – Customer order 4711 created (Pos 10 + Pos 20)" },
+  { t: 1, label: "10:01 – Delivery note creation held by Smart Job (until cutoff 14:00)" },
+  { t: 240, label: "14:00 – Cutoff reached, Pos 20 still not available" },
+  { t: 241, label: "14:01 – Delivery Note 1 released for Item A only (cutoff fallback)" },
+  { t: 249, label: "14:09 – Item A picked from storage" },
+  { t: 252, label: "14:12 – Parcel 1 packed (Item A only)" },
+  { t: 261, label: "14:21 – Parcel 1 shipped" },
+  { t: 300, label: "15:00 – Item B put-away completed (delayed), available in storage" },
+  { t: 301, label: "15:01 – Delivery Note 2 created for Item B (Pos 20)" },
+  { t: 309, label: "15:09 – Item B picked from storage" },
+  { t: 312, label: "15:12 – Parcel 2 packed (Item B only)" },
+  { t: 321, label: "15:21 – Parcel 2 shipped — split shipment despite Smart Job" },
+];
+
+/* status progressions, evaluated by sim time */
+function statusA(scn, t) {
+  if (scn === 1) {
+    if (t < 1) return ["Available in storage (on stock)", "green"];
+    if (t < 2) return ["Delivery note created immediately", "blue"];
+    if (t < 10) return ["Picking in progress", "orange"];
+    if (t < 20) return ["Picked", "green"];
+    if (t < 30) return ["Packed (Parcel 1)", "green"];
+    return ["Shipped — Parcel 1 (alone)", "red"];
+  }
+  if (scn === 3) {
+    if (t < 1) return ["Available in storage", "green"];
+    if (t < 241) return ["Reserved — waiting for Pos 20 (until cutoff)", "orange"];
+    if (t < 242) return ["Delivery note created (cutoff reached)", "blue"];
+    if (t < 249) return ["Picking in progress", "orange"];
+    if (t < 252) return ["Packed (Parcel 1)", "green"];
+    return ["Shipped — Parcel 1", "red"];
+  }
+  if (t < 1) return ["Available in storage", "green"];
+  if (t < 121) return ["Reserved — waiting for Pos 20", "orange"];
+  if (t < 130) return ["Delivery note created (combined)", "blue"];
+  if (t < 140) return ["Picked", "green"];
+  if (t < 150) return ["Packed (combined parcel)", "green"];
+  return ["Shipped — combined parcel", "green"];
+}
+function statusB(scn, t) {
+  if (scn === 3) {
+    if (t < 275) return ["Waiting in inbound — put-away delayed", "orange"];
+    if (t < 300) return ["Put-away in progress", "orange"];
+    if (t < 301) return ["Available in storage", "green"];
+    if (t < 309) return ["Delivery Note 2 created", "blue"];
+    if (t < 312) return ["Picked", "green"];
+    if (t < 321) return ["Packed (Parcel 2)", "green"];
+    return ["Shipped — Parcel 2", "red"];
+  }
+  if (t < 95) return ["Waiting in inbound", "orange"];
+  if (t < 120) return ["Put-away in progress", "orange"];
+  if (scn === 1) {
+    if (t < 121) return ["Available in storage", "green"];
+    if (t < 130) return ["Delivery Note 2 created", "blue"];
+    if (t < 140) return ["Picked", "green"];
+    if (t < 150) return ["Packed (Parcel 2)", "green"];
+    return ["Shipped — Parcel 2", "red"];
+  }
+  if (t < 121) return ["Available in storage", "green"];
+  if (t < 130) return ["Delivery note created (combined)", "blue"];
+  if (t < 140) return ["Picked", "green"];
+  if (t < 150) return ["Packed (combined parcel)", "green"];
+  return ["Shipped — combined parcel", "green"];
+}
+function systemStatus(scn, t) {
+  if (scn === 2) {
+    if (t >= 1 && t < 121)
+      return {
+        text: "Delivery note creation temporarily held",
+        sub: "Waiting for the second position of the same order to become available.",
+        color: "#4da3ff",
+      };
+    if (t >= 121 && t < 150)
+      return { text: "Combined delivery note created", sub: "Pos 10 + Pos 20 → one parcel", color: "#37c978" };
+    if (t >= 150)
+      return { text: "Order shipped complete in one parcel", sub: "Transport cost 1×", color: "#37c978" };
+  } else if (scn === 3) {
+    if (t >= 1 && t < CUTOFF_T)
+      return {
+        text: "Delivery note creation held — waiting for cutoff",
+        sub: "Waiting for the second position of the same order (until 14:00).",
+        color: "#4da3ff",
+      };
+    if (t >= CUTOFF_T && t < 241)
+      return {
+        text: "Cutoff reached — Pos 20 still not available",
+        sub: "Job releases Item A separately instead of waiting further.",
+        color: "#ff9d42",
+      };
+    if (t >= 241 && t < 300)
+      return { text: "Delivery Note 1 released and shipped", sub: "Waiting for Item B put-away (delayed until 15:00)…", color: "#ff9d42" };
+    if (t >= 300 && t < 321)
+      return { text: "Delivery Note 2 created", sub: "Second pick / pack / ship for the same order", color: "#4da3ff" };
+    if (t >= 321)
+      return { text: "Split shipment: cutoff was missed", sub: "Transport cost 2× — not a system delay", color: "#ff5c5c" };
+  } else {
+    if (t < 1)
+      return { text: "Item A already on stock — Item B still in inbound", sub: "Old World creates a delivery note as soon as any position is available.", color: "#9aa7b8" };
+    if (t >= 1 && t < 30)
+      return { text: "Delivery Note 1 created immediately for Item A", sub: "Item A was on stock, so it ships right away — without waiting for Item B.", color: "#4da3ff" };
+    if (t >= 30 && t < 121)
+      return { text: "Parcel 1 (Item A) already shipped", sub: "Left the building before Item B was even put away.", color: "#ff9d42" };
+    if (t >= 121 && t < 150)
+      return { text: "Delivery Note 2 created for Item B", sub: "A second pick / pack / ship for the very same order.", color: "#4da3ff" };
+    if (t >= 150)
+      return { text: "Split shipment: 2 parcels for 1 order", sub: "Transport cost 2× — the gap this job closes.", color: "#ff5c5c" };
+  }
+  return { text: "Customer order 4711 created", sub: "Pos 10: Item A · Pos 20: Item B", color: "#9aa7b8" };
+}
+
+/* ============================================================
+   3D positions (left → right: Inbound → Storage → Picking → Packing → Shipping)
+   Racks are centered at z = -6 with depth 2.4 (corpus z: -7.2 .. -4.8).
+   The aisle runs at z = 5. Items rest on the aisle-facing front edge (z = -4.6)
+   so nothing sits inside the rack corpus.
+   ============================================================ */
+const RACK_Z = -6;              // rack corpus center
+const RACK_FRONT = -4.6;        // aisle-facing shelf lip (just in front of corpus)
+const RACK_A = [-18, 2.35, RACK_FRONT];   // Item A on shelf, front lip
+const RACK_B = [-15, 2.35, RACK_FRONT];   // Item B target slot, front lip
+const INB_B = [-42, 0.62, 5];             // Item B waiting in inbound
+const PACK_DROP = [13, 2.05, 0];          // on packing table (pick drop-off)
+const CONV_START = [16.5, 1.35, 0];
+const CONV_END = [33.5, 1.35, 0];
+
+/* small article + carton interior geometry, shared by build + motion so items
+   visibly rest on the carton floor and two clearly fit side by side. */
+const ITEM_SIZE = 0.55;                    // article edge length (small)
+const CARTON_POS = [13, 1.55, 0];          // carton group origin
+const CARTON_CH = 0.5;                     // carton wall height (matches build)
+// carton floor mesh top = origin.y - ch/2 + floorThickness; item rests its half-height above that
+const CARTON_FLOOR_Y = CARTON_POS[1] - CARTON_CH / 2 + 0.06 + ITEM_SIZE / 2;
+const SLOT_A_Z = -0.42;                    // left slot inside carton
+const SLOT_B_Z = 0.42;                     // right slot inside carton
+
+function pickPath(t0, t1, from, offZ = 0) {
+  /* front lip → lower → into aisle (z=5) → east to x=13 → onto table. Right angles only. */
+  const d = t1 - t0;
+  return [
+    { t: t0, p: from },
+    { t: t0 + d * 0.12, p: [from[0], 0.9, from[2]] },
+    { t: t0 + d * 0.28, p: [from[0], 0.9, 5 + offZ] },
+    { t: t0 + d * 0.75, p: [13, 0.9, 5 + offZ] },
+    { t: t0 + d * 0.9, p: [13, 0.9, 0 + offZ * 0.3] },
+    { t: t1, p: [PACK_DROP[0] + offZ * 0.6, PACK_DROP[1], PACK_DROP[2] + offZ * 0.5] },
+  ];
+}
+function putawayPath(t0, t1) {
+  /* inbound → aisle (z=5) → in front of the target slot → set onto front lip (z=-4.6).
+     Never crosses into the corpus (z < -4.8). */
+  return [
+    { t: t0, p: INB_B },
+    { t: t0 + (t1 - t0) * 0.35, p: [-30, 0.62, 5] },
+    { t: t0 + (t1 - t0) * 0.62, p: [RACK_B[0], 0.62, 5] },
+    { t: t0 + (t1 - t0) * 0.85, p: [RACK_B[0], 0.62, RACK_FRONT + 0.6] },
+    { t: t1, p: RACK_B },
+  ];
+}
+function parcelPath(t0, t1, endPos) {
+  const d = t1 - t0;
+  const [ex, ey, ez] = endPos;
+  return [
+    { t: t0, p: [PACK_DROP[0], 1.7, 0] },
+    { t: t0 + d * 0.10, p: CONV_START },
+    { t: t0 + d * 0.55, p: CONV_END },
+    { t: t0 + d * 0.68, p: [36.5, 1.7, 0] },   // end of conveyor
+    { t: t0 + d * 0.82, p: [36.5, 1.7, ez] },  // turn to the truck's lane
+    { t: t1, p: [ex, ey, ez] },                 // drive straight into the truck
+  ];
+}
+
+/* helper: smooth vertical descent from table height down onto a target point inside the carton */
+function sinkTo(t, t0, x, z) {
+  const f = Math.min(1, Math.max(0, (t - t0) / 3));
+  const yTop = PACK_DROP[1];
+  const y = yTop + (CARTON_FLOOR_Y - yTop) * f;
+  return [x, y, z];
+}
+
+/* Item A movement per scenario */
+function itemAPos(scn, t) {
+  if (scn === 1) {
+    if (t < 11) return RACK_A;
+    if (t < 19) return pathPos(pickPath(11, 19, RACK_A), t);
+    if (t < 24) return sinkTo(t, 19, CARTON_POS[0], CARTON_POS[2]); // centered, alone
+    return null; // inside parcel 1
+  }
+  if (scn === 3) {
+    if (t < 241) return RACK_A;
+    if (t < 249) return pathPos(pickPath(241, 249, RACK_A), t);
+    if (t < 252) return sinkTo(t, 249, CARTON_POS[0], CARTON_POS[2]); // centered, alone
+    return null;
+  }
+  // S2: stays reserved on shelf until 121
+  if (t < 122) return RACK_A;
+  if (t < 130) return pathPos(pickPath(122, 130, RACK_A, -0.9), t);
+  if (t < 145) return sinkTo(t, 138, CARTON_POS[0], CARTON_POS[2] + SLOT_A_Z); // left slot, rests until seal
+  return null;
+}
+/* Item B movement per scenario */
+function itemBPos(scn, t) {
+  if (scn === 3) {
+    if (t < 275) return INB_B;
+    if (t < 300) return pathPos(putawayPath(275, 300), t);
+    if (t < 301) return RACK_B;
+    if (t < 309) return pathPos(pickPath(301, 309, RACK_B), t);
+    if (t < 312) return sinkTo(t, 309, CARTON_POS[0], CARTON_POS[2]); // centered, alone (parcel 2)
+    return null;
+  }
+  if (t < 95) return INB_B;
+  if (t < 120) return pathPos(putawayPath(95, 120), t);
+  if (scn === 1) {
+    if (t < 122) return RACK_B;
+    if (t < 130) return pathPos(pickPath(122, 130, RACK_B), t);
+    if (t < 141) return sinkTo(t, 138, CARTON_POS[0], CARTON_POS[2]); // centered, alone (parcel 2)
+    return null;
+  }
+  if (t < 122) return RACK_B;
+  if (t < 130) return pathPos(pickPath(122, 130, RACK_B, 0.9), t);
+  if (t < 145) return sinkTo(t, 138, CARTON_POS[0], CARTON_POS[2] + SLOT_B_Z); // right slot, rests until seal
+  return null;
+}
+/* forklift follows Item B during put-away, staying on the aisle side (never inside the corpus) */
+function forkliftPos(scn, t) {
+  if (scn === 3) {
+    if (t < 275) return [-39, 0, 8];
+    if (t <= 300) {
+      const p = pathPos(putawayPath(275, 300), t);
+      // clamp forklift body to stay in front of the rack front lip
+      return [p[0] - 0.2, 0, Math.max(p[2], RACK_FRONT) + 2.0];
+    }
+    return [-24, 0, 8];
+  }
+  if (t < 95) return [-39, 0, 8];
+  if (t <= 120) {
+    const p = pathPos(putawayPath(95, 120), t);
+    return [p[0] - 0.2, 0, Math.max(p[2], RACK_FRONT) + 2.0];
+  }
+  return [-24, 0, 8];
+}
+/* pick cart follows active pick */
+function cartPos(scn, t) {
+  if (scn === 3) {
+    const activeA = t >= 241 && t < 249;
+    const activeB = t >= 301 && t < 309;
+    if (!activeA && !activeB) return [-6, 0, 8];
+    const p = activeA ? pathPos(pickPath(241, 249, RACK_A), t) : pathPos(pickPath(301, 309, RACK_B), t);
+    return [p[0], 0, p[2] + 1.0];
+  }
+  const active =
+    (scn === 1 && ((t >= 11 && t < 19) || (t >= 122 && t < 130))) ||
+    (scn === 2 && t >= 122 && t < 130);
+  if (!active) return [-6, 0, 8];
+  let p;
+  if (t < 19) p = pathPos(pickPath(11, 19, RACK_A), t);
+  else p = pathPos(pickPath(122, 130, scn === 1 ? RACK_B : RACK_A, scn === 2 ? -0.9 : 0), t);
+  return [p[0], 0, p[2] + 1.0];
+}
+/* parcels */
+function parcel1Pos(scn, t) {
+  if (scn === 3) {
+    if (t < 252) return null;
+    return pathPos(parcelPath(252, 261, [41, 1.7, -3]), t);
+  }
+  if (scn === 1) {
+    if (t < 24) return null;
+    return pathPos(parcelPath(24, 32, [41, 1.7, -3]), t);
+  }
+  // S2 combined parcel — one truck (truck 1), after both items rested together
+  if (t < 145) return null;
+  return pathPos(parcelPath(145, 152, [41, 1.7, -3]), t);
+}
+function parcel2Pos(scn, t) {
+  if (scn === 3) {
+    if (t < 312) return null;
+    return pathPos(parcelPath(312, 321, [41, 1.7, 3]), t);
+  }
+  if (scn !== 1 || t < 141) return null;
+  return pathPos(parcelPath(141, 150, [41, 1.7, 3]), t);
+}
+
+/* ---------- cinematic camera keyframes ----------
+   Returns a focus {x, z, dist} that gently follows the essential event.
+   Zones (x): inbound ≈ -42, storage ≈ -16, picking ≈ -4, packing ≈ 13, shipping ≈ 40.
+   Interpolated between keyframes so the camera glides instead of jumping. */
+function cameraKeyframes(scn) {
+  const OVERVIEW = { x: -4, z: 2, dist: 54 };
+  const RACK_VIEW = { x: -16.5, z: -2, dist: 14 };  // close-up on the A/B shelf slots
+  const INBOUND = { x: -34, z: 1, dist: 40 };
+  const STORAGE = { x: -16, z: 0, dist: 34 };
+  const PICKING = { x: -6, z: 2, dist: 32 };
+  const PACKING = { x: 13, z: 1, dist: 24 };   // close on the carton
+  const SHIPPING = { x: 38, z: 1, dist: 34 };
+  // shared intro: overview → zoom close into the rack to show where A and B sit/belong
+  const INTRO = [
+    { t: 0, ...OVERVIEW },
+    { t: 2, ...RACK_VIEW },
+    { t: 8, ...RACK_VIEW },   // hold on the slots so the viewer clearly reads which item is there
+  ];
+  if (scn === 1) {
+    return [
+      ...INTRO,
+      { t: 11, ...STORAGE }, { t: 16, ...PICKING },
+      { t: 21, ...PACKING }, { t: 26, ...PACKING },
+      { t: 32, ...SHIPPING }, { t: 42, ...OVERVIEW },
+      { t: 118, ...INBOUND }, { t: 124, ...STORAGE },
+      { t: 134, ...PACKING }, { t: 142, ...PACKING },
+      { t: 150, ...SHIPPING }, { t: 158, ...OVERVIEW },
+    ];
+  }
+  if (scn === 2) {
+    return [
+      ...INTRO,
+      { t: 11, ...STORAGE }, { t: 15, ...PICKING },
+      { t: 90, ...INBOUND },      // held; watch inbound where B is delayed
+      { t: 118, ...INBOUND }, { t: 124, ...STORAGE },
+      { t: 132, ...PACKING }, { t: 145, ...PACKING },   // both items in one carton
+      { t: 150, ...SHIPPING }, { t: 158, ...OVERVIEW },
+    ];
+  }
+  // scn === 3
+  return [
+    ...INTRO,
+    { t: 11, ...STORAGE }, { t: 15, ...PICKING },
+    { t: 200, ...PICKING },       // holding, cutoff board in view
+    { t: 236, ...PICKING }, { t: 244, ...STORAGE },     // cutoff hits, A released
+    { t: 250, ...PACKING }, { t: 261, ...SHIPPING },    // parcel 1 ships
+    { t: 290, ...INBOUND }, { t: 300, ...STORAGE },     // B finally put away
+    { t: 308, ...PACKING }, { t: 318, ...SHIPPING },    // parcel 2 ships
+    { t: 322, ...OVERVIEW },
+  ];
+}
+function cameraFocus(scn, t) {
+  const kf = cameraKeyframes(scn);
+  if (t <= kf[0].t) return kf[0];
+  const last = kf[kf.length - 1];
+  if (t >= last.t) return last;
+  for (let i = 0; i < kf.length - 1; i++) {
+    const a = kf[i], b = kf[i + 1];
+    if (t >= a.t && t <= b.t) {
+      const raw = b.t === a.t ? 1 : (t - a.t) / (b.t - a.t);
+      const f = raw * raw * (3 - 2 * raw); // smoothstep ease
+      return {
+        x: a.x + (b.x - a.x) * f,
+        z: a.z + (b.z - a.z) * f,
+        dist: a.dist + (b.dist - a.dist) * f,
+      };
+    }
+  }
+  return last;
+}
+
+/* ============================================================
+   Three.js scene construction
+   ============================================================ */
+function makeTextPlane(text, w, h, opts = {}) {
+  const c = document.createElement("canvas");
+  c.width = 512; c.height = Math.round((512 * h) / w);
+  const g = c.getContext("2d");
+  g.fillStyle = opts.bg || "rgba(0,0,0,0)";
+  g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = opts.color || "#cfd8e3";
+  // start from the requested size, then shrink until the text fits with padding
+  const pad = 24;
+  let size = opts.size || 90;
+  const setFont = (s) => { g.font = `600 ${s}px Inter, Arial, sans-serif`; };
+  setFont(size);
+  while (size > 12 && g.measureText(text).width > c.width - pad * 2) {
+    size -= 2;
+    setFont(size);
+  }
+  g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillText(text, c.width / 2, c.height / 2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, h),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+  );
+  return m;
+}
+
+function buildScene(scene) {
+  const refs = {};
+  scene.background = new THREE.Color(0x0b1017);
+  scene.fog = new THREE.Fog(0x0b1017, 70, 160);
+
+  /* lights */
+  const amb = new THREE.AmbientLight(0x8899bb, 0.55);
+  const hemi = new THREE.HemisphereLight(0x9db4d8, 0x1a2330, 0.5);
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1.05);
+  sun.position.set(25, 40, 20);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -60; sun.shadow.camera.right = 60;
+  sun.shadow.camera.top = 40; sun.shadow.camera.bottom = -40;
+  scene.add(amb, hemi, sun);
+
+  /* floor + tinted zones */
+  const floor = new THREE.Mesh(
+    new THREE.BoxGeometry(110, 0.3, 40),
+    new THREE.MeshStandardMaterial({ color: 0x151d28, roughness: 0.95 })
+  );
+  floor.position.set(-2, -0.15, 0);
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  const zones = [
+    { x: -41, w: 16, c: 0x2a2016, label: "INBOUND" },
+    { x: -19, w: 22, c: 0x16202e, label: "STORAGE" },
+    { x: -1, w: 12, c: 0x152619, label: "PICKING" },
+    { x: 12, w: 12, c: 0x231a2b, label: "PACKING" },
+    { x: 32, w: 22, c: 0x1c2129, label: "SHIPPING" },
+  ];
+  zones.forEach((z) => {
+    const zm = new THREE.Mesh(
+      new THREE.PlaneGeometry(z.w - 0.8, 24),
+      new THREE.MeshStandardMaterial({ color: z.c, roughness: 1 })
+    );
+    zm.rotation.x = -Math.PI / 2;
+    zm.position.set(z.x, 0.02, 0);
+    zm.receiveShadow = true;
+    scene.add(zm);
+    const lbl = makeTextPlane(z.label, 8, 1.7, { color: "#7f8ea3", size: 110 });
+    lbl.rotation.x = -Math.PI / 2;
+    lbl.position.set(z.x, 0.04, 10.4);
+    scene.add(lbl);
   });
 
-  useEffect(() => { runtime.current.playing = playing; }, [playing]);
-  useEffect(() => { runtime.current.speed = speed; }, [speed]);
-  useEffect(() => {
-    runtime.current.mode = mode;
-    runtime.current.t = 0;
-    runtime.current.playing = false;
-    setPlaying(false);
-    setHud({
-      clock: "10:00",
-      message: mode === "old" ? "Immediate delivery-note creation is active" : "Smart job waits for both positions",
-      itemA: "Available in storage",
-      itemB: "Waiting in inbound",
-      dn: "Not created",
-      parcels: 0,
-      cost: "—",
-      phase: "Order created",
+  const boxMat = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6, metalness: 0.05 });
+  const addBox = (w, h, d, c, pos, parent = scene) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), boxMat(c));
+    m.position.set(...pos);
+    m.castShadow = true; m.receiveShadow = true;
+    parent.add(m);
+    return m;
+  };
+
+  /* inbound: dock wall + truck */
+  addBox(1, 6, 22, 0x1f2733, [-49, 3, 0]);
+  const truck = new THREE.Group();
+  addBox(7, 3.4, 3, 0xdde3ea, [0, 2.0, 0], truck);      // trailer
+  addBox(2.2, 2.2, 2.8, 0x33507a, [4.6, 1.3, 0], truck); // cab
+  [[-2.6, 0.55, 1.5], [2.4, 0.55, 1.5], [-2.6, 0.55, -1.5], [2.4, 0.55, -1.5]].forEach((p) => {
+    const wmesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.55, 0.55, 0.4, 18),
+      new THREE.MeshStandardMaterial({ color: 0x0c0f13, roughness: 0.9 })
+    );
+    wmesh.rotation.x = Math.PI / 2;
+    wmesh.position.set(...p);
+    truck.add(wmesh);
+  });
+  truck.position.set(-43.5, 0, 0);
+  scene.add(truck);
+
+  /* storage: one high rack at the back of the storage zone, opening toward the aisle.
+     Corpus spans z: -7.2 .. -4.8; items rest on the front lip at z = -4.6. */
+  function rack(x, z) {
+    const grp = new THREE.Group();
+    // uprights at the four corners of the corpus
+    [-4.5, -1.5, 1.5, 4.5].forEach((lx) => {
+      addBox(0.25, 5.4, 0.25, 0x36527a, [lx, 2.7, -1.1], grp);
+      addBox(0.25, 5.4, 0.25, 0x36527a, [lx, 2.7, 1.1], grp);
     });
-  }, [mode]);
+    // shelf decks
+    [1.1, 2.15, 3.2, 4.25].forEach((y) => addBox(9.4, 0.14, 2.4, 0x24344a, [0, y, 0], grp));
+    // back panel so we never see "through" the rack
+    addBox(9.4, 5.4, 0.1, 0x1b2637, [0, 2.7, -1.15], grp);
+    // stored inventory sits toward the BACK half of each shelf (z ≈ -0.5),
+    // leaving the aisle-facing front lip (z ≈ +0.5 local → world -4.6) clear
+    [[-3.4, 2.55], [0.4, 3.6], [3.2, 1.5], [-1.2, 4.65], [2.2, 4.65]].forEach(([bx, by]) =>
+      addBox(1.0, 0.7, 1.0, 0x8a6d4a, [bx, by, -0.45], grp)
+    );
+    grp.position.set(x, 0, z);
+    scene.add(grp);
+    return grp;
+  }
+  rack(-17, RACK_Z);
+
+  /* shelf slot markers: highlight where Item A sits and where Item B belongs.
+     Used by the intro camera move to explain the starting situation. */
+  function slotMarker(pos, color, filled) {
+    const g = new THREE.Group();
+    // thin outline frame around the slot (four bars)
+    const barMat = new THREE.MeshStandardMaterial({
+      color, emissive: new THREE.Color(color), emissiveIntensity: 0.6, roughness: 0.5,
+    });
+    const bar = (w, h, d, p) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), barMat);
+      m.position.set(...p); g.add(m);
+    };
+    const s = 0.85;
+    bar(s, 0.05, 0.05, [0, -s / 2, 0.5]);
+    bar(s, 0.05, 0.05, [0, s / 2, 0.5]);
+    bar(0.05, s, 0.05, [-s / 2, 0, 0.5]);
+    bar(0.05, s, 0.05, [s / 2, 0, 0.5]);
+    if (!filled) {
+      // faint floor pad to signal an empty reserved slot
+      const pad = new THREE.Mesh(
+        new THREE.PlaneGeometry(s, s),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.14 })
+      );
+      pad.position.set(0, -s / 2 + 0.02, 0.5);
+      pad.rotation.x = -Math.PI / 2;
+      g.add(pad);
+    }
+    g.position.set(pos[0], pos[1], pos[2]);
+    scene.add(g);
+    return g;
+  }
+  const slotA = slotMarker(RACK_A, 0x2f7fe0, true);   // Item A present (blue)
+  const slotB = slotMarker(RACK_B, 0xf08a24, false);  // Item B expected, empty (orange)
+  const slotAlabel = makeTextPlane("Item A · on stock", 3.0, 0.7, { color: "#8fc0ff", bg: "rgba(10,20,35,0.85)", size: 60 });
+  slotAlabel.position.set(RACK_A[0], RACK_A[1] + 0.75, RACK_A[2] + 0.55);
+  scene.add(slotAlabel);
+  const slotBlabel = makeTextPlane("Item B · slot empty", 3.2, 0.7, { color: "#ffc07a", bg: "rgba(35,22,10,0.85)", size: 60 });
+  slotBlabel.position.set(RACK_B[0], RACK_B[1] + 0.75, RACK_B[2] + 0.55);
+  scene.add(slotBlabel);
+  refs.slotA = slotA; refs.slotB = slotB;
+  refs.slotAlabel = slotAlabel; refs.slotBlabel = slotBlabel;
+
+  /* picking terminal + printer (system event, small) */
+  const term = new THREE.Group();
+  addBox(0.9, 1.5, 0.7, 0x2a3646, [0, 0.75, 0], term);
+  const screen = addBox(0.8, 0.55, 0.06, 0x0e2a44, [0, 1.65, 0.36], term);
+  screen.material.emissive = new THREE.Color(0x1c5f9e);
+  screen.material.emissiveIntensity = 0.7;
+  addBox(0.8, 0.35, 0.6, 0x3a4657, [0, 1.9, 0], term); // printer head
+  term.position.set(-4, 0, 6.5);
+  scene.add(term);
+  refs.screen = screen;
+  const paper = addBox(0.55, 0.02, 0.75, 0xf2f4f7, [0, 2.1, 0.35]);
+  paper.visible = false; paper.position.set(-4, 2.1, 6.9);
+  refs.paper = paper;
+
+  /* cutoff sign: a flat board mounted above the storage rack, facing the aisle.
+     Flips from blue to red once 14:00 has passed. */
+  const cutoffWall = new THREE.Group();
+  // two short mounting posts rising from the top of the rack
+  addBox(0.18, 1.0, 0.18, 0x2a3646, [-2.6, 0.5, 0], cutoffWall);
+  addBox(0.18, 1.0, 0.18, 0x2a3646, [2.6, 0.5, 0], cutoffWall);
+  // the illuminated board
+  const cutoffBackdrop = new THREE.Mesh(
+    new THREE.BoxGeometry(6.0, 1.3, 0.14),
+    new THREE.MeshStandardMaterial({ color: 0x123249, emissive: 0x1c5f9e, emissiveIntensity: 0.6, roughness: 0.5 })
+  );
+  cutoffBackdrop.position.set(0, 1.35, 0.05);
+  cutoffBackdrop.castShadow = true;
+  cutoffWall.add(cutoffBackdrop);
+  // fixed label facing +z (the aisle); no per-frame billboarding
+  const cutoffLabel = makeTextPlane("SHIPPING CUTOFF 14:00", 5.8, 1.25, { color: "#ffffff", size: 88 });
+  cutoffLabel.position.set(0, 1.35, 0.13);
+  cutoffWall.add(cutoffLabel);
+  // mount it on top of the rack (rack at x=-17, front lip z≈-4.6, top ≈ y 5.4)
+  cutoffWall.position.set(-17, 5.3, RACK_FRONT + 0.3);
+  scene.add(cutoffWall);
+  refs.cutoffBackdrop = cutoffBackdrop;
+  refs.cutoffLabel = cutoffLabel;
+
+  /* waiting / late indicator tags (billboarded toward camera each frame) */
+  const waitingTag = makeTextPlane("WAITING — Pos 20 not yet available", 4.6, 0.8, {
+    color: "#bcd2ec", bg: "rgba(14,26,41,0.92)", size: 62,
+  });
+  waitingTag.visible = false;
+  scene.add(waitingTag);
+  refs.waitingTag = waitingTag;
+
+  const lateTag = makeTextPlane("LATE — CUTOFF MISSED", 3.6, 0.8, {
+    color: "#ffb3b3", bg: "rgba(58,22,32,0.92)", size: 72,
+  });
+  lateTag.visible = false;
+  scene.add(lateTag);
+  refs.lateTag = lateTag;
+
+  /* packing table + open carton (low walls so the packed items stay visible) */
+  addBox(4.2, 0.2, 3.2, 0x3a2f4d, [13, 1.25, 0]);
+  [[-1.9, 0.6, -1.4], [1.9, 0.6, -1.4], [-1.9, 0.6, 1.4], [1.9, 0.6, 1.4]].forEach((p) =>
+    addBox(0.25, 1.2, 0.25, 0x241d33, [13 + p[0], p[1], p[2]])
+  );
+  const carton = new THREE.Group();
+  const cw = 1.9, ch = 0.5, cd = 1.7, wall = 0.06;
+  addBox(cw, wall, cd, 0x9a7648, [0, -ch / 2, 0], carton);                         // floor
+  addBox(cw, ch, wall, 0x8a6942, [0, 0, -cd / 2 + wall / 2], carton);             // back wall
+  addBox(cw, ch, wall, 0x8a6942, [0, 0, cd / 2 - wall / 2], carton);              // front wall
+  addBox(wall, ch, cd, 0x8a6942, [-cw / 2 + wall / 2, 0, 0], carton);            // left wall
+  addBox(wall, ch, cd, 0x8a6942, [cw / 2 - wall / 2, 0, 0], carton);             // right wall
+  // open flaps angled outward, so the box reads as "open, ready to pack"
+  const flapFront = addBox(cw, wall, 0.7, 0xb08a54, [0, ch / 2, cd / 2 + 0.3], carton);
+  flapFront.rotation.x = -0.9;
+  const flapBack = addBox(cw, wall, 0.7, 0xb08a54, [0, ch / 2, -cd / 2 - 0.3], carton);
+  flapBack.rotation.x = 0.9;
+  carton.position.set(...CARTON_POS);
+  scene.add(carton);
+  refs.carton = carton;
+
+  /* conveyor packing → shipping */
+  addBox(18, 0.28, 1.7, 0x27303c, [25, 1.15, 0]);
+  for (let x = 17; x <= 33; x += 1.6) {
+    const r = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.12, 0.12, 1.5, 10),
+      new THREE.MeshStandardMaterial({ color: 0x4d5a6b, metalness: 0.4, roughness: 0.5 })
+    );
+    r.rotation.x = Math.PI / 2;
+    r.position.set(x, 1.34, 0);
+    scene.add(r);
+    addBox(0.18, 1.1, 0.18, 0x1c232d, [x, 0.55, 1.0]);
+    addBox(0.18, 1.1, 0.18, 0x1c232d, [x, 0.55, -1.0]);
+  }
+
+  /* shipping: dock wall + two outbound trucks (lane z=-3 and z=+3) */
+  addBox(1, 6, 22, 0x1f2733, [48, 3, 0]);
+  function outboundTruck(z, color) {
+    const g = new THREE.Group();
+    addBox(7, 3.2, 2.6, 0xdde3ea, [0, 2.0, 0], g);          // box trailer
+    addBox(6.6, 2.8, 0.1, color, [0.1, 2.0, 1.31], g);      // colored side panel
+    addBox(2.1, 2.1, 2.4, 0x33507a, [4.4, 1.3, 0], g);      // cab
+    [[-2.4, 0.5, 1.2], [2.2, 0.5, 1.2], [-2.4, 0.5, -1.2], [2.2, 0.5, -1.2]].forEach((p) => {
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.35, 16),
+        new THREE.MeshStandardMaterial({ color: 0x0c0f13, roughness: 0.9 }));
+      w.rotation.x = Math.PI / 2; w.position.set(...p); g.add(w);
+    });
+    g.position.set(43, 0, z);
+    scene.add(g);
+    return g;
+  }
+  const truckOut1 = outboundTruck(-3, 0x3f7fd0);
+  const truckOut2 = outboundTruck(3, 0xe08a2a);
+  refs.truckOut1 = truckOut1; refs.truckOut2 = truckOut2;
+  // small "TRUCK 1 / TRUCK 2" labels above each
+  const t1label = makeTextPlane("TRUCK 1", 2.6, 0.7, { color: "#bcd6ff", bg: "rgba(12,22,38,0.8)", size: 72 });
+  t1label.position.set(43, 4.4, -3); refs.truckOut1label = t1label; scene.add(t1label);
+  const t2label = makeTextPlane("TRUCK 2", 2.6, 0.7, { color: "#ffd0a0", bg: "rgba(38,24,10,0.8)", size: 72 });
+  t2label.position.set(43, 4.4, 3); refs.truckOut2label = t2label; scene.add(t2label);
+
+  /* forklift builder (body color configurable) */
+  function buildForklift(bodyColor) {
+    const fk = new THREE.Group();
+    addBox(1.5, 1.1, 1.9, bodyColor, [0, 0.75, 0.4], fk);
+    addBox(1.3, 0.9, 0.9, 0x2c3644, [0, 1.65, 0.7], fk);
+    addBox(0.12, 2.6, 0.12, 0x8b93a1, [-0.5, 1.5, -0.75], fk);
+    addBox(0.12, 2.6, 0.12, 0x8b93a1, [0.5, 1.5, -0.75], fk);
+    addBox(1.15, 0.08, 0.9, 0xb8c0cc, [0, 0.35, -1.25], fk);
+    [[-0.65, 0.35, 1.1], [0.65, 0.35, 1.1], [-0.65, 0.35, -0.3], [0.65, 0.35, -0.3]].forEach((p) => {
+      const wmesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.35, 0.35, 0.3, 14),
+        new THREE.MeshStandardMaterial({ color: 0x11151b })
+      );
+      wmesh.rotation.x = Math.PI / 2;
+      wmesh.position.set(...p);
+      fk.add(wmesh);
+    });
+    scene.add(fk);
+    return fk;
+  }
+  const fk = buildForklift(0xd8a02a);
+  refs.forklift = fk;
+
+  /* ambient forklift — quietly patrols the inbound/storage aisle so the hall
+     never looks frozen during long waiting phases. Never enters the rack corpus. */
+  const fk2 = buildForklift(0x8a9bb0);
+  fk2.position.set(-35, 0, 8);
+  refs.forklift2 = fk2;
+
+
+  /* pick cart pushed by a picker (roll cart + simple human figure) */
+  const cart = new THREE.Group();
+  // roll cart: platform, handle, mesh basket
+  addBox(1.2, 0.1, 0.9, 0x39a06b, [0, 0.55, 0], cart);
+  addBox(0.08, 1.0, 0.9, 0x2b7a51, [-0.6, 1.0, 0], cart);         // handle post
+  addBox(0.5, 0.08, 0.9, 0x2b7a51, [-0.55, 1.45, 0], cart);       // handle bar
+  // low basket walls so picked items are visible on the cart
+  addBox(1.2, 0.35, 0.05, 0x2f8a5c, [0, 0.75, 0.42], cart);
+  addBox(1.2, 0.35, 0.05, 0x2f8a5c, [0, 0.75, -0.42], cart);
+  addBox(0.05, 0.35, 0.9, 0x2f8a5c, [0.58, 0.75, 0], cart);
+  [[-0.45, 0.18, 0.35], [0.45, 0.18, 0.35], [-0.45, 0.18, -0.35], [0.45, 0.18, -0.35]].forEach((p) => {
+    const wmesh = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.12, 10),
+      new THREE.MeshStandardMaterial({ color: 0x11151b }));
+    wmesh.rotation.x = Math.PI / 2; wmesh.position.set(...p); cart.add(wmesh);
+  });
+  // picker: stands behind the handle (−x side), facing +x (direction of travel)
+  const picker = new THREE.Group();
+  const skin = 0xc98a5a, vest = 0xf0c000, legs = 0x2a3546;
+  addBox(0.45, 0.75, 0.28, vest, [0, 1.05, 0], picker);           // torso (hi-vis vest)
+  addBox(0.32, 0.32, 0.3, skin, [0, 1.55, 0], picker);            // head
+  addBox(0.12, 0.6, 0.12, legs, [-0.12, 0.3, 0], picker);        // left leg
+  addBox(0.12, 0.6, 0.12, legs, [0.12, 0.3, 0], picker);         // right leg
+  addBox(0.1, 0.5, 0.1, vest, [0.28, 1.15, 0.05], picker);       // arm reaching to handle
+  picker.position.set(-1.05, 0, 0);                               // behind the cart handle
+  cart.add(picker);
+  refs.picker = picker;
+  scene.add(cart);
+  refs.cart = cart;
+
+  /* items — small articles, so it's visually obvious two fit into one carton */
+  const itemA = addBox(ITEM_SIZE, ITEM_SIZE, ITEM_SIZE, 0x2f7fe0, RACK_A);
+  itemA.material.emissive = new THREE.Color(0x123a6e);
+  itemA.material.emissiveIntensity = 0.4;
+  const itemB = addBox(ITEM_SIZE, ITEM_SIZE, ITEM_SIZE, 0xf08a24, INB_B);
+  itemB.material.emissive = new THREE.Color(0x6e3a08);
+  itemB.material.emissiveIntensity = 0.4;
+  refs.itemA = itemA; refs.itemB = itemB;
+
+  /* parcels */
+  const mkParcel = () => {
+    const g = new THREE.Group();
+    addBox(1.5, 0.95, 1.5, 0x9a7648, [0, 0, 0], g);
+    addBox(1.54, 0.14, 0.34, 0xc9b089, [0, 0.42, 0], g); // tape
+    g.visible = false;
+    scene.add(g);
+    return g;
+  };
+  refs.parcel1 = mkParcel();
+  refs.parcel2 = mkParcel();
+
+  return refs;
+}
+
+/* ============================================================
+   Main simulation component
+   ============================================================ */
+function Simulation({ onBack }) {
+  const mountRef = useRef(null);
+  const threeRef = useRef(null);
+  const stateRef = useRef({ t: 0, playing: false, speed: 4, scenario: 1 });
+
+  const [scenario, setScenario] = useState(1);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(4);
+  const [uiT, setUiT] = useState(0); // for HUD refresh (updated ~10x/s)
+  const [panelTab, setPanelTab] = useState("compare"); // mobile: compare | pilot
+
+  stateRef.current.scenario = scenario;
+  stateRef.current.speed = speed;
+  stateRef.current.playing = playing;
+
+  const camState = useRef({
+    theta: -0.62, phi: 0.46, dist: 50,
+    target: new THREE.Vector3(-4, 2, 1),
+    auto: true,          // cinematic auto-follow on by default (for management demo)
+    manualUntil: 0,      // timestamp: suspend auto-follow briefly after manual input
+  });
+  const [autoCam, setAutoCam] = useState(true);
+  const toggleAutoCam = useCallback(() => {
+    camState.current.auto = !camState.current.auto;
+    setAutoCam(camState.current.auto);
+  }, []);
+  const resetCamera = useCallback(() => {
+    camState.current.theta = -0.62;
+    camState.current.phi = 0.46;
+    camState.current.dist = 50;
+    camState.current.auto = true;
+    setAutoCam(true);
+  }, []);
+
+  const restart = useCallback(() => {
+    stateRef.current.t = 0;
+    setUiT(0);
+  }, []);
+
+  const switchScenario = useCallback((s) => {
+    setScenario(s);
+    stateRef.current.t = 0;
+    setUiT(0);
+    setPlaying(false);
+  }, []);
 
   useEffect(() => {
     const mount = mountRef.current;
-    if (!mount) return undefined;
+    if (!mount) return;
 
-    const W = Math.max(1, mount.clientWidth);
-    const H = Math.max(1, mount.clientHeight);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(W, H);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(C.bg);
-    scene.fog = new THREE.Fog(C.bg, 36, 86);
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 400);
+    const refs = buildScene(scene);
+    threeRef.current = { renderer, scene, camera, refs };
 
-    const camera = new THREE.PerspectiveCamera(45, W / H, 0.1, 180);
-    const cam = { theta: -0.72, phi: 0.96, radius: 29, target: new THREE.Vector3(0, 1.1, 1.6) };
-    const applyCam = () => {
-      const sp = Math.sin(cam.phi), cp = Math.cos(cam.phi);
-      camera.position.set(
-        cam.target.x + cam.radius * sp * Math.sin(cam.theta),
-        cam.target.y + cam.radius * cp,
-        cam.target.z + cam.radius * sp * Math.cos(cam.theta)
-      );
-      camera.lookAt(cam.target);
+    const resize = () => {
+      const w = mount.clientWidth, h = mount.clientHeight;
+      if (w === 0 || h === 0) return;
+      renderer.setSize(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
     };
-    applyCam();
+    resize();
+    window.addEventListener("resize", resize);
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null;
+    if (ro) ro.observe(mount);
 
-    scene.add(new THREE.HemisphereLight(0xd8e4f2, 0x18202b, 1.25));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.75);
-    sun.position.set(-8, 20, 12);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    scene.add(sun);
-
-    const mat3 = (color, roughness = 0.72, metalness = 0.08) => new THREE.MeshStandardMaterial({ color, roughness, metalness });
-    const addBox = (root, x, y, z, sx, sy, sz, color, roughness, metalness) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat3(color, roughness, metalness));
-      mesh.position.set(x, y, z);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      root.add(mesh);
-      return mesh;
+    /* camera controls: drag rotate, wheel zoom.
+       Rotation is always user-controlled; auto mode only drives target + distance.
+       A manual zoom briefly hands distance back to the user. */
+    let dragging = false, px = 0, py = 0;
+    const onDown = (e) => { dragging = true; px = e.clientX; py = e.clientY; };
+    const onMove = (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - px, dy = e.clientY - py;
+      px = e.clientX; py = e.clientY;
+      camState.current.theta -= dx * 0.005;
+      camState.current.phi = Math.min(1.35, Math.max(0.12, camState.current.phi + dy * 0.004));
     };
-    const addSmallSign = (root, textValue, color, x, y, z, scale = 2.2) => {
-      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeLabelTexture(textValue, "", color), transparent: true, depthTest: false }));
-      sprite.scale.set(scale, scale * 0.46, 1);
-      sprite.position.set(x, y, z);
-      sprite.renderOrder = 20;
-      root.add(sprite);
-      return sprite;
+    const onUp = () => (dragging = false);
+    const onWheel = (e) => {
+      e.preventDefault();
+      camState.current.dist = Math.min(110, Math.max(18, camState.current.dist + e.deltaY * 0.05));
+      camState.current.manualUntil = performance.now() + 3500; // let the user keep their zoom for a moment
     };
-
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(48, 25), mat3(0x101720, 0.98, 0));
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-    scene.add(floor);
-    const grid = new THREE.GridHelper(48, 24, 0x2a3747, 0x1b2530);
-    grid.position.y = 0.02;
-    scene.add(grid);
-
-    const root = new THREE.Group();
-    scene.add(root);
-
-    // Four clean process zones.
-    addBox(root, -15.0, 0.03, 5.0, 7.0, 0.06, 6.2, 0x14283a);
-    addBox(root, -5.5, 0.03, 5.0, 8.0, 0.06, 6.2, 0x302b18);
-    addBox(root, 5.0, 0.03, 1.2, 8.5, 0.06, 6.2, 0x16311f);
-    addBox(root, 15.0, 0.03, 1.2, 7.0, 0.06, 6.2, 0x2b2117);
-
-    // Inbound dock and put-away conveyor.
-    addBox(root, -16.0, 0.75, 5.1, 3.0, 1.5, 2.6, 0x52667a);
-    addBox(root, -12.2, 0.55, 5.1, 4.8, 0.34, 0.95, 0x3d4a58);
-    addSmallSign(root, "INBOUND PUT-AWAY", C.blue, -14.2, 2.8, 5.0, 2.8);
-
-    // Storage rack with two visible locations.
-    for (let i = 0; i < 4; i += 1) {
-      const x = -8.2 + i * 1.65;
-      addBox(root, x, 1.6, 5.0, 1.1, 3.2, 0.72, 0x657385);
-      [0.55, 1.5, 2.45].forEach((y) => addBox(root, x, y, 5.0, 1.2, 0.08, 0.82, 0x8793a1));
-    }
-    addSmallSign(root, "STORAGE", C.yellow, -5.7, 3.5, 5.0, 2.1);
-
-    // One simple delivery-note station, packing table and straight outbound conveyor.
-    addBox(root, 0.8, 0.65, 1.2, 1.15, 1.3, 0.95, 0x354454);
-    addSmallSign(root, "DN CREATION", C.dim, 0.8, 2.35, 1.2, 1.9);
-
-    addBox(root, 5.2, 1.0, 1.2, 2.7, 0.18, 1.8, 0x6e7b89);
-    [[-1.0,-0.65],[1.0,-0.65],[-1.0,0.65],[1.0,0.65]].forEach(([dx,dz]) => addBox(root, 5.2+dx, 0.5, 1.2+dz, 0.1, 1.0, 0.1, 0x485361));
-    addSmallSign(root, "PACKING", C.green, 5.2, 3.0, 1.2, 1.9);
-
-    addBox(root, 10.0, 0.58, 1.2, 7.0, 0.28, 1.0, 0x3c4956);
-    addBox(root, 15.8, 0.75, 1.2, 2.8, 1.5, 2.4, 0xc77a31);
-    addSmallSign(root, "SHIPPING", C.orange, 15.8, 2.9, 1.2, 2.0);
-
-    // Static worker at packing table.
-    const workerBody = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.9, 14), mat3(0x4d6278, 0.8, 0.02));
-    workerBody.position.set(4.0, 1.25, 2.65); workerBody.castShadow = true; root.add(workerBody);
-    const workerHead = new THREE.Mesh(new THREE.SphereGeometry(0.21, 18, 12), mat3(0xd2a077, 0.9, 0));
-    workerHead.position.set(4.0, 1.9, 2.65); root.add(workerHead);
-
-    // Clean orthogonal route lines on the floor.
-    const lineMat = new THREE.MeshBasicMaterial({ color: 0x53677c, transparent: true, opacity: 0.55 });
-    const addRoute = (x, z, sx, sz) => {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(sx, sz), lineMat.clone());
-      m.rotation.x = -Math.PI / 2;
-      m.position.set(x, 0.055, z);
-      root.add(m);
-    };
-    addRoute(-10.5, 5.0, 4.0, 0.16);
-    addRoute(-1.5, 5.0, 6.0, 0.16);
-    addRoute(1.5, 3.1, 0.16, 3.8);
-    addRoute(3.0, 1.2, 3.0, 0.16);
-
-    const actorsRoot = new THREE.Group();
-    scene.add(actorsRoot);
-    let actors = [];
-
-    const makeItem = (color) => {
-      const g = new THREE.Group();
-      const item = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.38, 0.46), mat3(color, 0.7, 0.04));
-      item.position.y = 0.19; item.castShadow = true; g.add(item);
-      return g;
-    };
-    const makeParcel = (color) => {
-      const g = new THREE.Group();
-      const p = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.72, 0.76), mat3(0xc9975b, 0.88, 0.02));
-      p.position.y = 0.36; p.castShadow = true; g.add(p);
-      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.74, 0.78), mat3(color, 0.74, 0.02));
-      stripe.position.y = 0.36; g.add(stripe);
-      return g;
-    };
-    const makeDN = (color) => {
-      const g = new THREE.Group();
-      const paper = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.06, 0.76), mat3(0xffffff, 0.9, 0));
-      paper.position.y = 0.05; g.add(paper);
-      const mark = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.07, 0.10), mat3(color, 0.65, 0));
-      mark.position.set(0, 0.09, 0.17); g.add(mark);
-      return g;
-    };
-
-    const pathPos = (path, t) => {
-      if (t <= path[0][0]) return path[0];
-      for (let i=1;i<path.length;i+=1) {
-        const a=path[i-1], b=path[i];
-        if (t <= b[0]) {
-          const f=(t-a[0])/Math.max(0.0001,b[0]-a[0]);
-          return [t,a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f,a[3]+(b[3]-a[3])*f];
-        }
-      }
-      return path[path.length-1];
-    };
-
-    const addActor = (obj, start, end, path) => {
-      obj.visible = false;
-      actorsRoot.add(obj);
-      actors.push({ obj, start, end, path });
-    };
-
-    const rebuildActors = () => {
-      actorsRoot.clear();
-      actors = [];
-      const old = runtime.current.mode === "old";
-
-      // Position 1 starts on stock; position 2 starts in inbound.
-      addActor(makeItem(0x3ddc84), 0, old ? 1.8 : 8.3, [[0, -6.8, 0.58, 4.95]]);
-      addActor(makeItem(0xff9f43), 0, 6.2, [[0, -15.8, 0.78, 5.05]]);
-      addActor(makeItem(0xff9f43), 6.2, 8.0, [
-        [6.2, -15.8, 0.78, 5.05],
-        [6.9, -12.0, 0.78, 5.05],
-        [7.6, -8.9, 0.78, 5.05],
-        [8.0, -5.1, 0.58, 4.95],
-      ]);
-
-      if (old) {
-        // First DN and first item are processed immediately.
-        addActor(makeDN(0xff6b6b), 0.55, 1.35, [[0.55, 0.8, 1.35, 1.2], [1.35, 3.3, 1.1, 1.2]]);
-        addActor(makeItem(0x3ddc84), 1.0, 2.3, [[1.0, -6.8, 0.58, 4.95], [1.55, -1.5, 0.58, 4.95], [1.95, 1.5, 0.58, 3.2], [2.3, 5.0, 1.35, 1.2]]);
-        addActor(makeParcel(0xff6b6b), 2.55, 4.3, [[2.55, 5.2, 1.35, 1.2], [3.25, 9.0, 0.78, 1.2], [4.3, 15.8, 0.78, 1.2]]);
-
-        // Second DN and second item follow after put-away.
-        addActor(makeDN(0xff6b6b), 8.15, 8.95, [[8.15, 0.8, 1.35, 1.2], [8.95, 3.3, 1.1, 1.2]]);
-        addActor(makeItem(0xff9f43), 8.35, 9.45, [[8.35, -5.1, 0.58, 4.95], [8.8, -1.5, 0.58, 4.95], [9.1, 1.5, 0.58, 3.2], [9.45, 5.3, 1.35, 1.2]]);
-        addActor(makeParcel(0xff6b6b), 9.7, 11.25, [[9.7, 5.2, 1.35, 1.2], [10.3, 9.0, 0.78, 1.2], [11.25, 15.8, 0.78, 1.2]]);
+    const el = renderer.domElement;
+    el.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    el.addEventListener("wheel", onWheel, { passive: false });
+    /* touch: pinch to zoom, two-finger drag to pan the camera target */
+    let pinch = 0;
+    let panPrev = null;
+    const onTouchStart = (e) => {
+      if (e.touches.length === 2) {
+        pinch = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        panPrev = {
+          x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+          y: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+        };
       } else {
-        // Position 1 remains reserved until both positions are available.
-        addActor(makeDN(0x3ddc84), 8.15, 8.95, [[8.15, 0.8, 1.35, 1.2], [8.95, 3.3, 1.1, 1.2]]);
-        addActor(makeItem(0x3ddc84), 8.25, 9.35, [[8.25, -6.8, 0.58, 4.95], [8.65, -1.5, 0.58, 4.95], [9.0, 1.5, 0.58, 3.2], [9.35, 4.7, 1.35, 0.9]]);
-        addActor(makeItem(0xff9f43), 8.35, 9.45, [[8.35, -5.1, 0.58, 4.95], [8.75, -1.5, 0.58, 4.95], [9.1, 1.5, 0.58, 3.2], [9.45, 5.8, 1.35, 1.5]]);
-        addActor(makeParcel(0x3ddc84), 9.8, 11.15, [[9.8, 5.2, 1.35, 1.2], [10.35, 9.0, 0.78, 1.2], [11.15, 15.8, 0.78, 1.2]]);
+        panPrev = null;
       }
     };
-    rebuildActors();
-
-    let dragging=false, lx=0, ly=0;
-    const down=(e)=>{dragging=true;lx=e.clientX;ly=e.clientY;};
-    const move=(e)=>{if(!dragging)return;const dx=e.clientX-lx,dy=e.clientY-ly;lx=e.clientX;ly=e.clientY;cam.theta-=dx*.005;cam.phi=Math.min(1.38,Math.max(.34,cam.phi-dy*.005));applyCam();};
-    const up=()=>{dragging=false;};
-    const wheel=(e)=>{e.preventDefault();cam.radius=Math.min(46,Math.max(17,cam.radius*(1+e.deltaY*.001)));applyCam();};
-    renderer.domElement.addEventListener("mousedown",down);
-    window.addEventListener("mousemove",move);
-    window.addEventListener("mouseup",up);
-    renderer.domElement.addEventListener("wheel",wheel,{passive:false});
-
-    const clock = new THREE.Clock();
-    let raf=0, lastMode=runtime.current.mode, hudAcc=0;
-    const tick=()=>{
-      const dt=Math.min(.05,clock.getDelta());
-      if(lastMode!==runtime.current.mode){lastMode=runtime.current.mode;rebuildActors();}
-      if(runtime.current.playing) runtime.current.t=Math.min(11.5,runtime.current.t+dt*runtime.current.speed);
-      const t=runtime.current.t;
-      actors.forEach(a=>{
-        const visible=t>=a.start&&t<=a.end;
-        a.obj.visible=visible;
-        if(visible){const [,x,y,z]=pathPos(a.path,t);a.obj.position.set(x,y,z);}
-      });
-
-      hudAcc+=dt;
-      if(hudAcc>.10){
-        hudAcc=0;
-        const mins=600+(t/11.5)*165;
-        const h=Math.floor(mins/60),m=Math.floor(mins%60);
-        let message="Customer order created with two positions";
-        let itemA="Available in storage";
-        let itemB="Waiting in inbound";
-        let dn="Not created";
-        let parcels=0;
-        let cost="—";
-        let phase="Order created";
-
-        if(t>=6.2){itemB="Put-away in progress";phase="Inbound put-away";}
-        if(t>=8.0){itemB="Available in storage";}
-
-        if(runtime.current.mode==="old"){
-          if(t>=.55){dn="DN 1 created for Item A";message="Position 1 is released immediately";phase="First delivery created";}
-          if(t>=2.55){itemA="Packed in Parcel 1";}
-          if(t>=4.3){parcels=1;cost="1×";message="Parcel 1 has already left before Item B is available";phase="First shipment completed";}
-          if(t>=8.15){dn="DN 2 created for Item B";message="A second delivery is created after put-away";phase="Second delivery created";}
-          if(t>=9.7){itemB="Packed in Parcel 2";}
-          if(t>=11.25){parcels=2;cost="2×";message="Two parcels shipped although both items fit into one package";phase="Split shipment";}
-        } else {
-          if(t>=.55){dn="Creation intentionally held";message="Smart job waits for the missing position";phase="Consolidation hold";}
-          if(t>=8.0){message="Both positions are available at the same shipping point";phase="Order complete";}
-          if(t>=8.15){dn="1 combined DN created";message="One delivery note releases both positions together";phase="Combined delivery created";}
-          if(t>=9.8){itemA="Packed together";itemB="Packed together";}
-          if(t>=11.15){parcels=1;cost="1×";message="Both items shipped in one parcel";phase="Consolidated shipment";}
+    const onTouchMove = (e) => {
+      if (e.touches.length === 2 && pinch) {
+        const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        camState.current.dist = Math.min(110, Math.max(18, camState.current.dist - (d - pinch) * 0.1));
+        pinch = d;
+        const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        if (panPrev) {
+          const dx = cx - panPrev.x, dy = cy - panPrev.y;
+          const th = camState.current.theta;
+          camState.current.target.x -= (dx * Math.cos(th) - dy * 0) * 0.035;
+          camState.current.target.z += (dx * Math.sin(th)) * 0.035;
+          camState.current.target.y = Math.min(6, Math.max(0.5, camState.current.target.y + dy * 0.02));
         }
-
-        setHud({clock:`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`,message,itemA,itemB,dn,parcels,cost,phase});
-        setPlaying(runtime.current.playing);
+        panPrev = { x: cx, y: cy };
       }
-      renderer.render(scene,camera);
-      raf=requestAnimationFrame(tick);
     };
-    tick();
+    el.addEventListener("touchstart", onTouchStart);
+    el.addEventListener("touchmove", onTouchMove);
 
-    const resize=()=>{const w=mount.clientWidth,h=mount.clientHeight;camera.aspect=w/Math.max(1,h);camera.updateProjectionMatrix();renderer.setSize(w,h);};
-    window.addEventListener("resize",resize);
+    let last = performance.now();
+    let hudAcc = 0;
+    let raf = 0;
 
-    return()=>{
+    const animate = (now) => {
+      raf = requestAnimationFrame(animate);
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      const st = stateRef.current;
+      const scn = st.scenario;
+      const endT = getEndT(scn);
+      if (st.playing && st.t < endT) {
+        const ff = fastForward(scn, st.t);
+        st.t = Math.min(endT, st.t + dt * st.speed * ff.mult);
+      }
+      const t = st.t;
+
+      /* camera */
+      const cs = camState.current;
+      if (cs.auto && now > cs.manualUntil && st.playing) {
+        const focus = cameraFocus(scn, t);
+        // ease target + distance toward the focused event (rotation stays user-set)
+        const k = Math.min(1, dt * 1.8);
+        cs.target.x += (focus.x - cs.target.x) * k;
+        cs.target.z += (focus.z - cs.target.z) * k;
+        cs.target.y += (2 - cs.target.y) * k;
+        cs.dist += (focus.dist - cs.dist) * k;
+      }
+      camera.position.set(
+        cs.target.x + cs.dist * Math.sin(cs.theta) * Math.cos(cs.phi),
+        cs.target.y + cs.dist * Math.sin(cs.phi),
+        cs.target.z + cs.dist * Math.cos(cs.theta) * Math.cos(cs.phi)
+      );
+      camera.lookAt(cs.target);
+
+      /* objects */
+      const { itemA, itemB, forklift, cart, parcel1, parcel2, paper, screen } = refs;
+      const pa = itemAPos(scn, t);
+      itemA.visible = !!pa;
+      if (pa) itemA.position.set(...pa);
+      const pb = itemBPos(scn, t);
+      itemB.visible = !!pb;
+      if (pb) itemB.position.set(...pb);
+
+      const fp = forkliftPos(scn, t);
+      // rotate forklift to face its direction of travel (smoothed)
+      const fdx = fp[0] - forklift.position.x;
+      const fdz = fp[2] - forklift.position.z;
+      if (Math.abs(fdx) > 0.002 || Math.abs(fdz) > 0.002) {
+        const targetYaw = Math.atan2(fdx, fdz);
+        let dy = targetYaw - forklift.rotation.y;
+        while (dy > Math.PI) dy -= Math.PI * 2;
+        while (dy < -Math.PI) dy += Math.PI * 2;
+        forklift.rotation.y += dy * Math.min(1, dt * 8);
+      }
+      forklift.position.set(fp[0], fp[1], fp[2]);
+
+      /* ambient forklift: slow, calm shuttle along the inbound aisle (x: -40 .. -30, z=8),
+         turning at each end. Only moves while playing, so a paused scene stays still. */
+      const fk2 = refs.forklift2;
+      if (st.playing) {
+        fk2.userData.p = (fk2.userData.p || 0) + dt * 0.05;
+        const phase = fk2.userData.p % 2;
+        const leg = phase < 1 ? phase : 2 - phase; // 0→1→0 triangle wave
+        fk2.position.x = -40 + leg * 10;
+        fk2.rotation.y = phase < 1 ? Math.PI / 2 : -Math.PI / 2;
+      }
+
+      const cp = cartPos(scn, t);
+      // face the cart toward its travel direction so the picker pushes from behind
+      const cdx = cp[0] - cart.position.x;
+      const cdz = cp[2] - cart.position.z;
+      if (Math.abs(cdx) > 0.002 || Math.abs(cdz) > 0.002) {
+        const targetYaw = Math.atan2(cdx, cdz);
+        let dy = targetYaw - cart.rotation.y;
+        while (dy > Math.PI) dy -= Math.PI * 2;
+        while (dy < -Math.PI) dy += Math.PI * 2;
+        cart.rotation.y += dy * Math.min(1, dt * 6);
+      }
+      cart.position.set(cp[0], cp[1], cp[2]);
+
+      const p1 = parcel1Pos(scn, t);
+      parcel1.visible = !!p1;
+      if (p1) parcel1.position.set(...p1);
+      const p2 = parcel2Pos(scn, t);
+      parcel2.visible = !!p2;
+      if (p2) parcel2.position.set(...p2);
+
+      /* delivery note printer paper */
+      const dnActive =
+        (scn === 1 && ((t >= 1 && t < 6) || (t >= 121 && t < 126))) ||
+        (scn === 2 && t >= 121 && t < 126) ||
+        (scn === 3 && ((t >= 241 && t < 246) || (t >= 301 && t < 306)));
+      paper.visible = dnActive;
+      if (dnActive) paper.position.y = 2.1 + Math.min(0.35, ((t % 1) * 0.35));
+      /* held state: screen pulses blue while the job is waiting */
+      if ((scn === 2 && t >= 1 && t < 121) || (scn === 3 && t >= 1 && t < CUTOFF_T)) {
+        screen.material.emissiveIntensity = 0.5 + 0.4 * Math.abs(Math.sin(now / 350));
+      } else {
+        screen.material.emissiveIntensity = 0.7;
+      }
+
+      /* cutoff board glows blue, flips to red once 14:00 has passed (emissive, fixed orientation) */
+      if (t >= CUTOFF_T) {
+        refs.cutoffBackdrop.material.emissive.set(0xb03030);
+        refs.cutoffBackdrop.material.emissiveIntensity = 0.55 + 0.25 * Math.abs(Math.sin(now / 400));
+      } else {
+        refs.cutoffBackdrop.material.emissive.set(0x1c5f9e);
+        refs.cutoffBackdrop.material.emissiveIntensity = 0.6;
+      }
+
+      /* "waiting in inbound" tag while Item B has not started put-away yet */
+      const waitingB = pb && pb[0] === INB_B[0] && pb[2] === INB_B[2];
+      refs.waitingTag.visible = !!waitingB;
+      if (waitingB) {
+        refs.waitingTag.position.set(INB_B[0], INB_B[1] + 1.15, INB_B[2]);
+        refs.waitingTag.lookAt(camera.position);
+        refs.waitingTag.material.opacity = 0.55 + 0.35 * Math.abs(Math.sin(now / 500));
+      }
+
+      /* "late — cutoff missed" tag + reddened glow, scenario 3 only */
+      const lateB = scn === 3 && t >= CUTOFF_T && t < 321;
+      refs.lateTag.visible = lateB && itemB.visible;
+      if (lateB && itemB.visible) {
+        refs.lateTag.position.set(itemB.position.x, itemB.position.y + 1.15, itemB.position.z);
+        refs.lateTag.lookAt(camera.position);
+      }
+      itemB.material.emissive.set(lateB ? 0x6e1808 : 0x6e3a08);
+      itemB.material.emissiveIntensity = lateB ? 0.55 : 0.35;
+
+      /* shelf slot markers: emphasise the starting situation, then fade out.
+         Slot A shows while Item A still sits on the shelf; slot B (empty) shows
+         until Item B has actually been put away into it. */
+      const aOnShelf = pa && Math.abs(pa[0] - RACK_A[0]) < 0.1 && Math.abs(pa[2] - RACK_A[2]) < 0.1;
+      const bInSlot = pb && Math.abs(pb[0] - RACK_B[0]) < 0.1 && Math.abs(pb[2] - RACK_B[2]) < 0.1;
+      const showA = aOnShelf && t < 46;
+      const showB = !bInSlot && (pb ? pb[0] === INB_B[0] : true); // empty until B arrives
+      refs.slotA.visible = showA;
+      refs.slotAlabel.visible = showA;
+      refs.slotB.visible = showB && t < (scn === 3 ? 300 : 122);
+      refs.slotBlabel.visible = refs.slotB.visible;
+      // billboard labels toward the camera
+      if (refs.slotAlabel.visible) refs.slotAlabel.lookAt(camera.position);
+      if (refs.slotBlabel.visible) refs.slotBlabel.lookAt(camera.position);
+      // pulse the empty B slot so it reads as "reserved / waiting"
+      if (refs.slotB.visible) {
+        const pulse = 0.4 + 0.4 * Math.abs(Math.sin(now / 500));
+        refs.slotB.children.forEach((ch) => {
+          if (ch.material && ch.material.emissiveIntensity !== undefined) ch.material.emissiveIntensity = pulse;
+        });
+      }
+
+      renderer.render(scene, camera);
+
+      hudAcc += dt;
+      if (hudAcc > 0.12) {
+        hudAcc = 0;
+        setUiT(st.t);
+      }
+    };
+    raf = requestAnimationFrame(animate);
+
+    return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener("resize",resize);
-      window.removeEventListener("mousemove",move);
-      window.removeEventListener("mouseup",up);
-      renderer.domElement.removeEventListener("mousedown",down);
-      renderer.domElement.removeEventListener("wheel",wheel);
-      scene.traverse(o=>{o.geometry?.dispose?.();if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{m.map?.dispose?.();m.dispose?.();});}});
+      window.removeEventListener("resize", resize);
+      if (ro) ro.disconnect();
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
       renderer.dispose();
-      renderer.domElement.remove();
+      scene.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          mats.forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); });
+        }
+      });
+      if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
+      threeRef.current = null;
     };
   }, []);
 
-  const pgBtn = (active) => ({
-    background: active ? PGC.blue : PGC.panel2,
-    color: active ? PGC.bg : PGC.text,
-    border: `1px solid ${active ? PGC.blue : PGC.line}`,
-    borderRadius: 8,
-    padding: "8px 12px",
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  });
+  /* ---------- derived UI data ---------- */
+  const t = uiT;
+  const [aTxt, aCol] = statusA(scenario, t);
+  const [bTxt, bCol] = statusB(scenario, t);
+  const sys = systemStatus(scenario, t);
+  const endT = getEndT(scenario);
+  const done = t >= endT - 0.5;
+  const ff = fastForward(scenario, t);
+  const colHex = { green: "#37c978", orange: "#ff9d42", blue: "#4da3ff", red: "#ff5c5c" };
 
-  const reset=()=>{
-    runtime.current.t=0;
-    runtime.current.playing=false;
-    setPlaying(false);
-    setHud({clock:"10:00",message:mode==="old"?"Immediate delivery-note creation is active":"Smart job waits for both positions",itemA:"Available in storage",itemB:"Waiting in inbound",dn:"Not created",parcels:0,cost:"—",phase:"Order created"});
-  };
-  const choose=(next)=>{runtime.current.mode=next;setMode(next);};
-
-  const statusStyle=(status)=>({
-    color: status.includes("Available")||status.includes("together")||status.includes("combined") ? C.green : status.includes("Waiting")||status.includes("progress")||status.includes("held") ? C.orange : C.text,
-    fontWeight:700,
-  });
+  const dn1Visible = (scenario === 1 && t >= 1) || (scenario === 3 && t >= 241);
+  const dn2Visible = (scenario === 1 && t >= 121) || (scenario === 3 && t >= 301);
+  const dnCombVisible = scenario === 2 && t >= 121;
 
   return (
-    <div style={{position:"absolute",inset:0,background:C.bg,color:C.text,fontFamily:"'Space Grotesk',system-ui,sans-serif",display:"flex",flexDirection:"column",overflow:"hidden"}}>
-      <div style={{minHeight:64,padding:"9px 14px",borderBottom:`1px solid ${C.line}`,display:"flex",alignItems:"center",gap:12,background:C.panel}}>
-        <div style={{marginRight:"auto"}}>
-          <div style={{fontSize:18,fontWeight:800}}>Process Gap Simulation · Same-Day & Same Shipping Point</div>
-          <div style={{fontSize:11,color:C.dim,fontFamily:"'IBM Plex Mono',monospace",marginTop:3}}>One order · two positions · compare split shipment versus consolidation</div>
+    <div className="pgs-root">
+      {/* top order panel */}
+      <div className="pgs-top">
+        <div className="pgs-order">
+          <div className="pgs-order-head">
+            <span className="pgs-order-title">Customer Order 4711</span>
+            <span className="pgs-order-meta">Created 10:00 · one order · two positions</span>
+            <span className="pgs-clock">{fmtClock(t)}</span>
+          </div>
+          <table className="pgs-table">
+            <thead>
+              <tr><th>Pos</th><th>Item</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>10</td>
+                <td><span className="dot" style={{ background: "#2f7fe0" }} />Item A</td>
+                <td style={{ color: colHex[aCol] }}>{aTxt}</td>
+              </tr>
+              <tr>
+                <td>20</td>
+                <td><span className="dot" style={{ background: "#f08a24" }} />Item B</td>
+                <td style={{ color: colHex[bCol] }}>{bTxt}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="pgs-sys" style={{ borderColor: sys.color }}>
+            <b style={{ color: sys.color }}>{sys.text}</b>
+            <span>{sys.sub}</span>
+          </div>
         </div>
-        <div style={{padding:"7px 11px",border:`1px solid ${C.orange}`,borderRadius:8,background:"rgba(255,140,66,.08)",textAlign:"center",minWidth:102}}>
-          <div style={{fontSize:8,color:C.dim,letterSpacing:1}}>TIME</div>
-          <div style={{fontSize:18,fontWeight:900}}>{hud.clock}</div>
+
+        {/* delivery notes */}
+        <div className="pgs-notes">
+          {dn1Visible && (
+            <div className="pgs-note">
+              <b>Delivery Note 1</b>
+              <span>Pos 10 · Item A · Qty 1</span>
+            </div>
+          )}
+          {dn2Visible && (
+            <div className="pgs-note">
+              <b>Delivery Note 2</b>
+              <span>Pos 20 · Item B · Qty 1</span>
+            </div>
+          )}
+          {dnCombVisible && (
+            <div className="pgs-note comb">
+              <b>Combined Delivery Note</b>
+              <span>Pos 10 · Item A · Qty 1</span>
+              <span>Pos 20 · Item B · Qty 1</span>
+            </div>
+          )}
+          {scenario === 2 && t >= 1 && t < 121 && (
+            <div className="pgs-note held">
+              <b>Smart Delivery Note Job</b>
+              <span>Creation held — waiting for Pos 20</span>
+            </div>
+          )}
+          {scenario === 3 && t >= 1 && t < CUTOFF_T && (
+            <div className="pgs-note held">
+              <b>Smart Delivery Note Job</b>
+              <span>Creation held until cutoff 14:00 — waiting for Pos 20</span>
+            </div>
+          )}
+          {scenario === 3 && t >= CUTOFF_T && t < 241 && (
+            <div className="pgs-note cutoff">
+              <b>Cutoff reached</b>
+              <span>Pos 20 still not available — releasing Item A separately</span>
+            </div>
+          )}
         </div>
-        <button style={pgBtn(false)} onClick={onHome}>⌂ Home</button>
       </div>
 
-      <div style={{flex:1,position:"relative",minHeight:0}}>
-        <div ref={mountRef} style={{position:"absolute",inset:0}} />
+      {/* 3D viewport (full width) */}
+      <div className="pgs-mid">
+        <div className="pgs-stage" ref={mountRef}>
+          {playing && ff.label && (
+            <div className="pgs-ff">
+              <span className="pgs-ff-icon">⏩</span> {ff.label}
+            </div>
+          )}
+          {/* conclusion overlays the stage */}
+          {done && (
+            <div className={`pgs-conclusion ${scenario === 1 ? "bad" : scenario === 2 ? "good" : "warn"}`}>
+              {scenario === 1 && (
+                <>
+                  <b>Split shipment — avoidable.</b>
+                  <span>
+                    Both items belonged to the same customer order and would have fitted into one
+                    parcel. Immediate delivery note creation caused an unnecessary split shipment,
+                    two deliveries and duplicate transport costs (⌀ €15 per shipment → ≈ €30 instead
+                    of ≈ €15). It also creates two delivery touchpoints for the customer.
+                  </span>
+                </>
+              )}
+              {scenario === 2 && (
+                <>
+                  <b>One order · one delivery · one parcel.</b>
+                  <span>
+                    The Smart Delivery Note Creation Job waited until both positions were available and
+                    combined them into one delivery note and one parcel — saving ⌀ €15 in transport
+                    cost and giving the customer a single delivery touchpoint.
+                  </span>
+                  <span className="pgs-note-sub">
+                    The job only waits until the shipping cutoff time. It does not delay orders beyond
+                    that — there is no impact on OTIF or on the delivery lead time of individual
+                    articles.
+                  </span>
+                </>
+              )}
+              {scenario === 3 && (
+                <>
+                  <b>Cutoff missed — fallback split shipment.</b>
+                  <span>
+                    Item B's put-away only completed at 15:00, after the 14:00 shipping cutoff. The
+                    Smart Delivery Note Creation Job released Item A separately right at the cutoff
+                    instead of waiting further, so the order still ships as two deliveries on two
+                    trucks (⌀ €15 extra transport cost, two customer touchpoints).
+                  </span>
+                  <span className="pgs-note-sub">
+                    This is expected behavior, not a delay: the job never holds a shipment past the
+                    cutoff, so Item A's delivery time and OTIF are unaffected — only the cost and
+                    CX saving did not materialize this time.
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
-        <div style={{position:"absolute",top:12,left:12,right:292,display:"grid",gridTemplateColumns:"minmax(360px,620px) minmax(230px,1fr)",gap:10,alignItems:"start",pointerEvents:"none"}}>
-          <div style={{background:"rgba(13,18,25,.94)",border:`1px solid ${C.line}`,borderRadius:11,overflow:"hidden",pointerEvents:"auto"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 12px",borderBottom:`1px solid ${C.line}`}}>
-              <div>
-                <div style={{fontSize:10,color:C.dim,letterSpacing:1,fontFamily:"'IBM Plex Mono',monospace"}}>CUSTOMER ORDER 4711 · CREATED 10:00</div>
-                <div style={{fontSize:15,fontWeight:800,marginTop:3}}>2 positions · same day · same shipping point</div>
+      {/* bottom: controls + timeline + comparison */}
+      <div className="pgs-bottom">
+        <div className="pgs-controls">
+          <button className="pgs-back" onClick={onBack}>‹ Home</button>
+          <div className="pgs-scn">
+            <button className={scenario === 1 ? "on s1" : ""} onClick={() => switchScenario(1)}>
+              Scenario 1 · Old World
+            </button>
+            <button className={scenario === 2 ? "on s2" : ""} onClick={() => switchScenario(2)}>
+              Scenario 2 · Smart Job (in time)
+            </button>
+            <button className={scenario === 3 ? "on s3" : ""} onClick={() => switchScenario(3)}>
+              Scenario 3 · Smart Job (cutoff missed)
+            </button>
+          </div>
+          <button className="pgs-play" onClick={() => setPlaying((p) => (t >= endT ? (restart(), true) : !p))}>
+            {t >= endT ? "▶ Restart" : playing ? "❚❚ Pause" : "▶ Start Simulation"}
+          </button>
+          <button onClick={restart}>↺ Restart</button>
+          <button className={autoCam ? "on-auto" : ""} onClick={toggleAutoCam}>
+            {autoCam ? "🎥 Auto camera: on" : "🎥 Auto camera: off"}
+          </button>
+          <button onClick={resetCamera}>⌂ Reset view</button>
+          <div className="pgs-speed">
+            <span>Speed</span>
+            {[[2, "0.5×"], [4, "1×"], [8, "2×"]].map(([s, lbl]) => (
+              <button key={s} className={speed === s ? "on" : ""} onClick={() => setSpeed(s)}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="pgs-costbar">
+          <span className="pgs-costbar-lead">Per warehouse (pilot):</span>
+          <span className="pgs-costbar-good">+€600/day realised</span>
+          <span className="pgs-costbar-bad">€450/day potential</span>
+          <span className="pgs-costbar-net">≈ €144k/yr · LEC ×5 ≈ €720k</span>
+          <button className="pgs-costbar-more" onClick={() => setPanelTab("pilot")}>business case ›</button>
+        </div>
+
+        <div className="pgs-tabbar">
+          <button className={panelTab === "compare" ? "on" : ""} onClick={() => setPanelTab("compare")}>Comparison</button>
+          <button className={panelTab === "pilot" ? "on" : ""} onClick={() => setPanelTab("pilot")}>Business case</button>
+        </div>
+
+        <div className="pgs-panels">
+          <div className={`pgs-cmp pgs-tabpanel ${panelTab === "compare" ? "active" : ""}`}>
+            <div className="pgs-panel-title">Comparison</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>KPI</th>
+                  <th className={scenario === 1 ? "hl1" : ""}>Old World</th>
+                  <th className={scenario === 2 ? "hl2" : ""}>Smart Job (in time)</th>
+                  <th className={scenario === 3 ? "hl3" : ""}>Smart Job (cutoff missed)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["Customer orders", "1", "1", "1"],
+                  ["Order positions", "2", "2", "2"],
+                  ["Delivery notes", "2", "1", "2"],
+                  ["Deliveries", "2", "1", "2"],
+                  ["Parcels", "2", "1", "2"],
+                  ["Outbound trucks", "2", "1", "2"],
+                  ["Transport cost (⌀ €15 / shipment)", "2× ≈ €30", "1× ≈ €15", "2× ≈ €30"],
+                  ["CX delivery touchpoints", "2", "1", "2"],
+                ].map((r) => (
+                  <tr key={r[0]}>
+                    <td>{r[0]}</td>
+                    <td className={scenario === 1 ? "hl1" : ""}>{r[1]}</td>
+                    <td className={scenario === 2 ? "hl2" : ""}>{r[2]}</td>
+                    <td className={scenario === 3 ? "hl3" : ""}>{r[3]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {scenario === 3 ? (
+              <div className="pgs-benefit warn">
+                No saving this time — Item B missed the 14:00 cutoff. Had it been put away before
+                14:00, the job would have consolidated it (⌀ €15 saving potential per order).
               </div>
-              <div style={{fontSize:10,color:mode==="old"?C.red:C.green,fontWeight:800}}>{mode==="old"?"OLD WORLD":"SMART DN JOB"}</div>
+            ) : (
+              <div className="pgs-benefit">
+                −1 parcel and −1 transport movement per affected customer order — ⌀ €15 saved per
+                avoided split shipment.
+              </div>
+            )}
+            <div className="pgs-footnote">
+              The Smart Delivery Note Creation Job only waits until the shipping cutoff time. It
+              never delays a shipment beyond that — so it has no influence on OTIF or on the
+              delivery lead time of individual articles.
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"74px 1fr 150px",fontSize:11}}>
-              <div style={tableHead}>Position</div><div style={tableHead}>Item</div><div style={tableHead}>Current status</div>
-              <div style={tableCell}>10</div><div style={tableCell}>Item A · warehouse stock</div><div style={{...tableCell,...statusStyle(hud.itemA)}}>{hud.itemA}</div>
-              <div style={tableCell}>20</div><div style={tableCell}>Item B · inbound receipt</div><div style={{...tableCell,...statusStyle(hud.itemB)}}>{hud.itemB}</div>
+            <div className="pgs-footnote">
+              CX impact: a split order reaches the customer as two separate deliveries — two
+              delivery touchpoints instead of one. Fewer touchpoints improve the customer
+              experience (CX Score), which measures how the customer perceives the delivery.
             </div>
           </div>
 
-          <div style={{background:"rgba(13,18,25,.92)",border:`1px solid ${mode==="old"?C.red:C.green}`,borderRadius:11,padding:"11px 13px",pointerEvents:"auto"}}>
-            <div style={{fontSize:9,color:C.dim,letterSpacing:1,marginBottom:5}}>CURRENT PROCESS STEP</div>
-            <div style={{fontSize:15,fontWeight:800,marginBottom:5}}>{hud.phase}</div>
-            <div style={{fontSize:12,color:C.dim,lineHeight:1.45}}>{hud.message}</div>
-            <div style={{fontSize:11,marginTop:8,color:C.text}}>Delivery note: <span style={{fontWeight:800}}>{hud.dn}</span></div>
+          <div className={`pgs-pilot pgs-tabpanel ${panelTab === "pilot" ? "active" : ""}`}>
+            <div className="pgs-panel-title">Business case — per warehouse (pilot) · region ×5</div>
+            <div className={`pgs-pilot-row ${scenario === 2 ? "hl2" : ""}`}>
+              <span className="pgs-pilot-label">
+                <b>Consolidated before cutoff</b>
+                <small>40 orders/day × €15 — realised saving</small>
+              </span>
+              <span className="pgs-pilot-val good">+€600 <small>/ day</small></span>
+            </div>
+            <div className={`pgs-pilot-row ${scenario === 3 ? "hl3" : ""}`}>
+              <span className="pgs-pilot-label">
+                <b>Split — put-away after 14:00</b>
+                <small>30 orders/day × €15 — saving potential if put away by 14:00</small>
+              </span>
+              <span className="pgs-pilot-val warn">€450 <small>/ day potential</small></span>
+            </div>
+            <div className="pgs-pilot-net">
+              <div className="pgs-pilot-net-day">
+                Net saving today: <b>€600 / day</b>
+                <span>realised · plus €450/day potential by improving put-away before 14:00</span>
+              </div>
+              <div className="pgs-pilot-net-year">
+                Net saving per year <span className="pgs-year-note">(per warehouse · 240 working days)</span>
+                <b>≈ €144,000</b>
+                <span>realised today · up to <b>≈ €252,000</b> if late put-aways are recovered</span>
+              </div>
+              <div className="pgs-pilot-net-region">
+                Region LEC <span className="pgs-year-note">(≈ 5 warehouses)</span>
+                <b>≈ €720,000 / year</b>
+                <span>realised · up to <b>≈ €1.26 M</b> with put-away before 14:00</span>
+              </div>
+            </div>
+            <div className="pgs-pilot-foot">
+              Figures are per warehouse; a region such as LEC can be estimated at roughly 5×.
+            </div>
           </div>
         </div>
-
-        <div style={{position:"absolute",top:12,right:12,width:268,display:"grid",gap:9}}>
-          <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
-            <div style={{fontSize:9,color:C.dim,letterSpacing:1,marginBottom:8}}>SCENARIO</div>
-            <button onClick={()=>choose("old")} style={{...pgBtn(mode==="old"),width:"100%",marginBottom:7,borderColor:C.red,color:mode==="old"?C.bg:C.red,background:mode==="old"?C.red:"transparent"}}>Old world · 2 parcels</button>
-            <button onClick={()=>choose("smart")} style={{...pgBtn(mode==="smart"),width:"100%",borderColor:C.green,color:mode==="smart"?C.bg:C.green,background:mode==="smart"?C.green:"transparent"}}>Smart DN · 1 parcel</button>
-          </div>
-
-          <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
-            <div style={{display:"flex",gap:7}}>
-              <button onClick={()=>{runtime.current.playing=!runtime.current.playing;setPlaying(runtime.current.playing);}} style={{...pgBtn(true),flex:1,background:playing?C.orange:C.green,borderColor:playing?C.orange:C.green,color:C.bg}}>{playing?"Pause":"Start"}</button>
-              <button onClick={reset} style={pgBtn(false)}>Reset</button>
-            </div>
-            <label style={{display:"flex",alignItems:"center",gap:7,marginTop:9,fontSize:11,color:C.dim}}>Speed<input type="range" min="0.6" max="2" step="0.1" value={speed} onChange={e=>{const v=Number(e.target.value);runtime.current.speed=v;setSpeed(v);}}/><span>{speed.toFixed(1)}×</span></label>
-          </div>
-
-          <div style={{background:"rgba(20,27,37,.95)",border:`1px solid ${C.line}`,borderRadius:12,padding:10}}>
-            <div style={{fontSize:9,color:C.dim,letterSpacing:1,marginBottom:8}}>BUSINESS IMPACT</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
-              {[['Parcels',hud.parcels],['Transport cost',hud.cost],['Delivery note',mode==='old'?(hud.dn.includes('2')?'2':'1'):(hud.dn.includes('combined')?'1':'0')],['Outcome',mode==='old'?'Split':'Combined']].map(([l,v])=><div key={l} style={{background:C.panel2,border:`1px solid ${C.line}`,borderRadius:8,padding:8}}><div style={{fontSize:9,color:C.dim}}>{l}</div><div style={{fontSize:17,fontWeight:900,marginTop:3}}>{v}</div></div>)}
-            </div>
-          </div>
-        </div>
-
-        <div style={{position:"absolute",left:12,bottom:12,padding:"7px 10px",background:"rgba(13,18,25,.88)",border:`1px solid ${C.line}`,borderRadius:8,color:C.dim,fontSize:10,fontFamily:"'IBM Plex Mono',monospace"}}>Drag to rotate · Scroll to zoom</div>
       </div>
     </div>
+  );
+}
+
+/* ============================================================
+   Landing page + app shell
+   ============================================================ */
+function StandaloneProcessGapApp() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <style>{CSS}</style>
+      {open ? (
+        <Simulation onBack={() => setOpen(false)} />
+      ) : (
+        <div className="pgs-landing">
+          <div className="pgs-card">
+            <div className="pgs-kicker">Warehouse process simulation</div>
+            <h1>Process Gap Simulation</h1>
+            <p>
+              Same-Day &amp; Same Shipping Point — avoid unnecessary split shipments through Smart
+              Delivery Note Creation.
+            </p>
+            <div className="pgs-mini">
+              <div><span className="dot" style={{ background: "#2f7fe0" }} /> Item A · Pos 10 · available in storage</div>
+              <div><span className="dot" style={{ background: "#f08a24" }} /> Item B · Pos 20 · waiting for put-away</div>
+            </div>
+            <button className="pgs-cta" onClick={() => setOpen(true)}>
+              Open Process Gap Simulation
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ============================================================ */
+const CSS = `
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+.pgs-root, .pgs-landing {
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  background: #0b1017; color: #d7dee8;
+  min-height: 100vh; display: flex; flex-direction: column;
+}
+.pgs-root { overflow-y: auto; }
+.pgs-landing { align-items: center; justify-content: center; padding: 24px; }
+.pgs-card {
+  max-width: 460px; width: 100%;
+  background: linear-gradient(160deg, #121a26, #0e1520);
+  border: 1px solid #223045; border-radius: 14px; padding: 34px 32px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.5);
+}
+.pgs-kicker { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: #6f7f95; margin-bottom: 10px; }
+.pgs-card h1 { margin: 0 0 10px; font-size: 26px; font-weight: 700; color: #f0f4f9; }
+.pgs-card p { margin: 0 0 18px; line-height: 1.5; color: #9fb0c4; font-size: 14px; }
+.pgs-mini { font-size: 13px; color: #c3cedb; display: flex; flex-direction: column; gap: 6px; margin-bottom: 22px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 7px; vertical-align: -1px; }
+.pgs-cta {
+  width: 100%; padding: 13px; font-size: 15px; font-weight: 600; color: #08131f;
+  background: #4da3ff; border: none; border-radius: 9px; cursor: pointer;
+}
+.pgs-cta:hover { background: #6bb4ff; }
+
+.pgs-top { display: flex; gap: 10px; padding: 8px 12px 4px; flex-wrap: wrap; flex-shrink: 0; }
+.pgs-order {
+  flex: 1 1 420px; background: #101825; border: 1px solid #223045; border-radius: 10px; padding: 10px 12px;
+}
+.pgs-order-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.pgs-order-title { font-weight: 700; color: #f0f4f9; font-size: 15px; }
+.pgs-order-meta { font-size: 11.5px; color: #7d8da3; }
+.pgs-clock { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 700; font-size: 18px; color: #4da3ff; }
+.pgs-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12.5px; }
+.pgs-table th { text-align: left; color: #6f7f95; font-weight: 600; padding: 3px 8px 3px 0; border-bottom: 1px solid #223045; }
+.pgs-table td { padding: 5px 8px 5px 0; border-bottom: 1px solid #182335; }
+.pgs-sys { margin-top: 8px; border-left: 3px solid; padding: 5px 10px; display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; font-size: 12.5px; background: #0d1420; border-radius: 0 6px 6px 0; }
+.pgs-sys span { color: #8fa0b6; }
+
+.pgs-notes { display: flex; flex-direction: column; gap: 8px; min-width: 230px; }
+.pgs-note {
+  background: #f2f4f7; color: #17202b; border-radius: 8px; padding: 8px 12px;
+  font-size: 12.5px; display: flex; flex-direction: column; gap: 2px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35);
+}
+.pgs-note b { font-size: 13px; }
+.pgs-note.comb { border-left: 4px solid #37c978; }
+.pgs-note.held { background: #14202f; color: #bcd2ec; border: 1px dashed #4da3ff; box-shadow: none; }
+.pgs-note.cutoff { background: #3a1620; color: #ffd9d9; border: 1px solid #ff5c5c; box-shadow: none; }
+
+/* middle row: 3D stage (left, grows) + event-log sidebar (right, fixed) */
+.pgs-mid { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; padding: 0 12px; }
+.pgs-stage { flex: 1; min-height: 60vh; height: 60vh; position: relative; border-radius: 10px; overflow: hidden; }
+.pgs-stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.pgs-stage canvas:active { cursor: grabbing; }
+
+.pgs-conclusion {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  max-width: 440px; width: calc(100% - 32px); padding: 16px 20px; border-radius: 12px; font-size: 13.5px;
+  display: flex; flex-direction: column; gap: 6px; line-height: 1.45;
+  box-shadow: 0 20px 50px rgba(0,0,0,.55); backdrop-filter: blur(4px); z-index: 5;
+}
+.pgs-conclusion b { font-size: 15px; }
+.pgs-conclusion.bad { background: rgba(70,16,20,.94); border: 1px solid #ff5c5c; color: #ffd9d9; }
+.pgs-conclusion.good { background: rgba(11,48,30,.94); border: 1px solid #37c978; color: #d7f5e3; }
+.pgs-conclusion.warn { background: rgba(58,32,10,.94); border: 1px solid #ff9d42; color: #ffe3c2; }
+
+.pgs-bottom { padding: 6px 12px 8px; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+.pgs-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pgs-controls button {
+  background: #16202f; border: 1px solid #2a3a52; color: #c3cedb;
+  padding: 7px 12px; border-radius: 8px; font-size: 12.5px; cursor: pointer;
+}
+.pgs-controls button:hover { border-color: #4da3ff; }
+.pgs-play { font-weight: 700; color: #08131f !important; background: #4da3ff !important; border-color: #4da3ff !important; }
+.pgs-controls button.on-auto { border-color: #4da3ff; color: #4da3ff; background: #12233a; }
+.pgs-scn { display: flex; gap: 6px; }
+.pgs-scn .on.s1 { background: #3a1620; border-color: #ff9d42; color: #ffc79a; }
+.pgs-scn .on.s2 { background: #0d2b1c; border-color: #37c978; color: #a9e8c6; }
+.pgs-scn .on.s3 { background: #3a1620; border-color: #ff5c5c; color: #ffb3b3; }
+.pgs-speed { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: #6f7f95; margin-left: auto; }
+.pgs-speed .on { border-color: #4da3ff; color: #4da3ff; }
+.pgs-back { opacity: .8; }
+
+.pgs-panels { display: flex; gap: 10px; flex-wrap: wrap; }
+.pgs-panel-title { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #6f7f95; margin-bottom: 6px; }
+.pgs-log {
+  flex: 1 1 340px; background: #101825; border: 1px solid #223045; border-radius: 10px;
+  padding: 9px 12px; max-height: 128px; overflow-y: auto; font-size: 12px;
+}
+.pgs-ev { padding: 2px 0; color: #5d6d84; display: flex; gap: 8px; }
+.pgs-ev.done { color: #cfe0f2; }
+.pgs-ev .tick { color: inherit; width: 12px; }
+.pgs-ev.done .tick { color: #37c978; }
+
+.pgs-cmp { flex: 1 1 300px; background: #101825; border: 1px solid #223045; border-radius: 10px; padding: 9px 12px; }
+.pgs-cmp table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.pgs-cmp th, .pgs-cmp td { text-align: left; padding: 3px 6px; border-bottom: 1px solid #182335; }
+.pgs-cmp th { color: #6f7f95; font-weight: 600; }
+.pgs-cmp .hl1 { background: rgba(255,157,66,.12); color: #ffc79a; }
+.pgs-cmp .hl2 { background: rgba(55,201,120,.12); color: #a9e8c6; }
+.pgs-cmp .hl3 { background: rgba(255,92,92,.12); color: #ffb3b3; }
+.pgs-benefit { margin-top: 7px; font-size: 12px; color: #37c978; font-weight: 600; }
+.pgs-benefit.warn { color: #ff9d42; }
+.pgs-footnote { margin-top: 6px; font-size: 11px; color: #7d8da3; line-height: 1.4; border-top: 1px solid #182335; padding-top: 6px; }
+.pgs-note-sub { font-size: 12px; color: #bcd2ec; opacity: .85; }
+
+.pgs-pilot { flex: 1 1 260px; background: #101825; border: 1px solid #223045; border-radius: 10px; padding: 9px 12px; }
+.pgs-pilot-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 7px; margin-bottom: 5px; font-size: 12px; }
+.pgs-pilot-label { color: #c3cedb; display: flex; flex-direction: column; gap: 1px; }
+.pgs-pilot-label b { font-size: 12.5px; color: #eaf1f8; font-weight: 600; }
+.pgs-pilot-label small { font-size: 10.5px; color: #7d8da3; }
+.pgs-pilot-val { white-space: nowrap; font-size: 16px; font-weight: 700; text-align: right; }
+.pgs-pilot-val small { font-size: 10px; font-weight: 400; color: #7d8da3; display: block; }
+.pgs-pilot-val.good { color: #37c978; }
+.pgs-pilot-val.warn { color: #ff9d42; }
+.pgs-pilot-row.hl2 { background: rgba(55,201,120,.14); outline: 1px solid rgba(55,201,120,.35); }
+.pgs-pilot-row.hl3 { background: rgba(255,157,66,.12); outline: 1px solid rgba(255,157,66,.35); }
+.pgs-pilot-net { margin-top: 8px; padding-top: 9px; border-top: 1px solid #223045; display: flex; flex-direction: column; gap: 9px; }
+.pgs-pilot-net-day { font-size: 12.5px; color: #37c978; font-weight: 600; display: flex; flex-direction: column; gap: 2px; }
+.pgs-pilot-net-day span { font-size: 10.5px; color: #7d8da3; font-weight: 400; }
+.pgs-pilot-net-year {
+  font-size: 12.5px; color: #cfe0f2; font-weight: 600; display: flex; flex-direction: column; gap: 3px;
+  background: #0d1a2b; border: 1px solid #1c3d5c; border-radius: 8px; padding: 9px 11px;
+}
+.pgs-pilot-net-year b { font-size: 22px; color: #4da3ff; line-height: 1.1; }
+.pgs-pilot-net-year b:last-of-type { font-size: 13px; }
+.pgs-pilot-net-year > span { font-size: 10.5px; color: #8fa0b6; font-weight: 400; }
+.pgs-pilot-net-region {
+  font-size: 12.5px; color: #d7f5e3; font-weight: 600; display: flex; flex-direction: column; gap: 3px;
+  background: #0d2419; border: 1px solid #1c5c3d; border-radius: 8px; padding: 9px 11px;
+}
+.pgs-pilot-net-region b { font-size: 22px; color: #37c978; line-height: 1.1; }
+.pgs-pilot-net-region b:last-of-type { font-size: 13px; }
+.pgs-pilot-net-region > span { font-size: 10.5px; color: #8fb8a0; font-weight: 400; }
+.pgs-pilot-foot { margin-top: 7px; font-size: 10.5px; color: #7d8da3; line-height: 1.4; }
+.pgs-year-note { font-size: 10px; color: #6f7f95; font-weight: 400; }
+
+
+/* fast-forward badge over the 3D stage */
+.pgs-ff {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  background: rgba(13,20,32,.9); border: 1px solid #2a3a52; color: #cfe0f2;
+  padding: 6px 14px; border-radius: 20px; font-size: 12.5px; font-weight: 600;
+  display: flex; align-items: center; gap: 7px; pointer-events: none;
+  box-shadow: 0 6px 20px rgba(0,0,0,.4); white-space: nowrap;
+}
+.pgs-ff-icon { color: #4da3ff; animation: pgs-ffpulse 1s ease-in-out infinite; }
+@keyframes pgs-ffpulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
+
+/* mobile-only cost summary strip — keeps the €-impact visible without opening a tab */
+.pgs-costbar { display: none; }
+@media (max-width: 760px) {
+  .pgs-costbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    background: #101825; border: 1px solid #223045; border-radius: 10px;
+    padding: 8px 11px; font-size: 12px;
+  }
+  .pgs-costbar-lead { color: #9fb0c4; flex-basis: 100%; font-size: 11px; }
+  .pgs-costbar-good { color: #37c978; font-weight: 700; }
+  .pgs-costbar-bad { color: #ff9d42; font-weight: 700; }
+  .pgs-costbar-net { color: #4da3ff; font-weight: 700; margin-left: auto; }
+  .pgs-costbar-more {
+    background: none; border: none; color: #6f7f95; font-size: 11.5px;
+    cursor: pointer; padding: 0; flex-basis: 100%; text-align: left;
+  }
+}
+
+/* panel tabs: hidden on desktop (all three panels show side by side) */
+.pgs-tabbar { display: none; gap: 6px; }
+.pgs-tabbar button {
+  flex: 1; background: #16202f; border: 1px solid #2a3a52; color: #9fb0c4;
+  padding: 7px 10px; border-radius: 8px 8px 0 0; font-size: 12px; cursor: pointer;
+}
+.pgs-tabbar button.on { background: #101825; border-bottom-color: #101825; color: #f0f4f9; }
+
+@media (max-width: 760px) {
+  .pgs-notes { flex-direction: row; flex-wrap: wrap; min-width: 0; }
+  .pgs-clock { font-size: 15px; }
+  .pgs-ff { font-size: 11px; padding: 5px 11px; max-width: 92%; white-space: normal; text-align: center; }
+  .pgs-mid { min-height: 0; }
+  .pgs-stage { min-height: 48vh; height: 48vh; }
+  /* on narrow screens, use the tab bar and show one panel at a time */
+  .pgs-tabbar { display: flex; }
+  .pgs-tabpanel { display: none; }
+  .pgs-tabpanel.active { display: block; }
+  .pgs-panels { display: block; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pgs-cta, .pgs-controls button { transition: none; }
+  .pgs-ff-icon { animation: none; }
+}
+`;
+
+  return { Simulation, CSS };
+})();
+
+function ProcessGapSimulation({ onHome }) {
+  return (
+    <>
+      <style>{EmbeddedProcessGap.CSS}</style>
+      <EmbeddedProcessGap.Simulation onBack={onHome} />
+    </>
   );
 }
 
