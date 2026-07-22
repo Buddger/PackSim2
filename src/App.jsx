@@ -2444,6 +2444,15 @@ function Simulation({ onBack }) {
                     two deliveries and duplicate transport costs (⌀ €15 per shipment → ≈ €30 instead
                     of ≈ €15). It also creates two delivery touchpoints for the customer.
                   </span>
+                  <span className="pgs-note-sub">
+                    Customer feedback is clear: when split deliveries are mentioned, customers are
+                    overwhelmingly dissatisfied and consistently prefer complete deliveries.
+                  </span>
+                  <span className="pgs-note-sub">
+                    This process gap is not limited to parcels. It also occurs with pallets and freight
+                    shipments and can cause one customer order to be split into two deliveries handled
+                    by different carriers on the same day.
+                  </span>
                 </>
               )}
               {scenario === 2 && (
@@ -2458,6 +2467,11 @@ function Simulation({ onBack }) {
                     The job only waits until the shipping cutoff time. It does not delay orders beyond
                     that — there is no impact on OTIF or on the delivery lead time of individual
                     articles.
+                  </span>
+                  <span className="pgs-note-sub">
+                    The same consolidation logic can also prevent avoidable splits for pallets and
+                    freight shipments, including customer orders that would otherwise be dispatched as
+                    two deliveries via different carriers.
                   </span>
                 </>
               )}
@@ -2570,13 +2584,20 @@ function Simulation({ onBack }) {
                 14:00, the job would have consolidated it (⌀ €15 saving potential per order).
               </div>
             ) : (
-              <div className="pgs-benefit">
-                −1 parcel and −1 transport movement per affected customer order — ⌀ €15 saved per
-                avoided split shipment.
+              <div className={`pgs-benefit ${scenario === 1 ? "bad" : "good"}`}>
+                {scenario === 1
+                  ? "Current Process: avoidable split — +1 delivery, +1 transport movement and approximately €15 additional cost per affected customer order."
+                  : "Smart Job: −1 parcel and −1 transport movement per affected customer order — approximately €15 saved per avoided split shipment."}
               </div>
             )}
             <div className="pgs-footnote"><b>Guardrail:</b> the job never holds an order beyond the shipping cutoff, protecting OTIF.</div>
             <div className="pgs-footnote"><b>CX impact:</b> one consolidated delivery reduces customer touchpoints from 2 to 1.</div>
+            <div className={`pgs-footnote ${scenario === 1 ? "customer-warning" : ""}`}>
+              <b>Customer feedback:</b> when customers mention split deliveries, they are overwhelmingly dissatisfied. Customers consistently prefer complete deliveries.
+            </div>
+            <div className="pgs-footnote">
+              <b>Broader scope:</b> the same issue occurs with parcels, pallets and freight shipments and can split one customer order into two deliveries transported by different carriers.
+            </div>
           </div>
 
           <div className={`pgs-pilot pgs-tabpanel ${panelTab === "pilot" ? "active" : ""}`}>
@@ -2759,8 +2780,11 @@ html, body, #root { height: 100%; margin: 0; }
 .pgs-cmp .hl1 { background: rgba(255,157,66,.12); color: #ffc79a; }
 .pgs-cmp .hl2 { background: rgba(55,201,120,.12); color: #a9e8c6; }
 .pgs-cmp .hl3 { background: rgba(255,92,92,.12); color: #ffb3b3; }
-.pgs-benefit { margin-top: 7px; font-size: 12px; color: #37c978; font-weight: 600; }
+.pgs-benefit { margin-top: 7px; font-size: 12px; font-weight: 700; }
+.pgs-benefit.good { color: #37c978; }
+.pgs-benefit.bad { color: #ff6b6b; }
 .pgs-benefit.warn { color: #ff9d42; }
+.pgs-footnote.customer-warning { color: #ffb3b3; }
 .pgs-footnote { margin-top: 6px; font-size: 11px; color: #7d8da3; line-height: 1.4; border-top: 1px solid #182335; padding-top: 6px; }
 .pgs-note-sub { font-size: 12px; color: #bcd2ec; opacity: .85; }
 
